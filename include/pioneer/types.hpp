@@ -70,6 +70,22 @@ struct CallSite {
     uint32_t line;              // Line number
 };
 
+// Symbol type classification
+enum class SymbolType {
+    Function,
+    Variable,
+    End
+};
+
+// Variable assignment information
+struct VariableAssignment {
+    std::string variable;       // Variable being assigned (qualified name)
+    std::string value_source;   // What it's assigned from (function call, variable, or literal)
+    std::string containing_func;// Function where assignment happens
+    uint32_t line;              // Line number
+    bool is_function_call;      // True if assigned from function return value
+};
+
 // Call graph representation using UIDs
 struct CallGraph {
     // Symbol name -> UID mapping
@@ -78,11 +94,20 @@ struct CallGraph {
     // UID -> Symbol name mapping (for reverse lookup)
     std::unordered_map<SymbolUID, std::string> uid_to_symbol;
     
+    // Symbol type mapping
+    std::unordered_map<SymbolUID, SymbolType> symbol_types;
+    
     // Call graph: caller UID -> set of callee UIDs
     std::unordered_map<SymbolUID, std::unordered_set<SymbolUID>> call_map;
     
     // Reverse call graph: callee UID -> set of caller UIDs (for backtrace)
     std::unordered_map<SymbolUID, std::unordered_set<SymbolUID>> reverse_call_map;
+    
+    // Data flow: variable UID -> set of source UIDs (what it's assigned from)
+    std::unordered_map<SymbolUID, std::unordered_set<SymbolUID>> data_flow_map;
+    
+    // Reverse data flow: source UID -> set of variable UIDs (what variables it flows to)
+    std::unordered_map<SymbolUID, std::unordered_set<SymbolUID>> reverse_data_flow_map;
     
     // Next available UID (starts at 1, 0 is invalid)
     SymbolUID next_uid = 1;
@@ -91,7 +116,7 @@ struct CallGraph {
     SymbolUID end_uid = INVALID_UID;
     
     // Get or create UID for a symbol
-    SymbolUID get_or_create_uid(const std::string& symbol_name) {
+    SymbolUID get_or_create_uid(const std::string& symbol_name, SymbolType type = SymbolType::Function) {
         auto it = symbol_to_uid.find(symbol_name);
         if (it != symbol_to_uid.end()) {
             return it->second;
@@ -99,6 +124,7 @@ struct CallGraph {
         SymbolUID uid = next_uid++;
         symbol_to_uid[symbol_name] = uid;
         uid_to_symbol[uid] = symbol_name;
+        symbol_types[uid] = type;
         return uid;
     }
     
@@ -115,10 +141,27 @@ struct CallGraph {
         return (it != uid_to_symbol.end()) ? it->second : "";
     }
     
+    // Get symbol type
+    SymbolType get_type(SymbolUID uid) const {
+        auto it = symbol_types.find(uid);
+        return (it != symbol_types.end()) ? it->second : SymbolType::Function;
+    }
+    
+    // Check if symbol is a variable
+    bool is_variable(SymbolUID uid) const {
+        return get_type(uid) == SymbolType::Variable;
+    }
+    
     // Add a call edge
     void add_call(SymbolUID caller, SymbolUID callee) {
         call_map[caller].insert(callee);
         reverse_call_map[callee].insert(caller);
+    }
+    
+    // Add a data flow edge (variable assignment)
+    void add_data_flow(SymbolUID variable, SymbolUID source) {
+        data_flow_map[variable].insert(source);
+        reverse_data_flow_map[source].insert(variable);
     }
     
     // Finalize the graph - add END node and connect leaf nodes
@@ -126,19 +169,20 @@ struct CallGraph {
         end_uid = next_uid++;
         symbol_to_uid["END"] = end_uid;
         uid_to_symbol[end_uid] = "END";
+        symbol_types[end_uid] = SymbolType::End;
         
-        // Find all leaf nodes (callers that don't call anyone, or callees that aren't callers)
+        // Find all leaf nodes (functions that don't call anyone)
         std::unordered_set<SymbolUID> all_symbols;
         for (const auto& [name, uid] : symbol_to_uid) {
-            if (uid != end_uid) {
+            if (uid != end_uid && get_type(uid) == SymbolType::Function) {
                 all_symbols.insert(uid);
             }
         }
         
-        // Connect leaf nodes to END
+        // Connect leaf function nodes to END
         for (SymbolUID uid : all_symbols) {
             if (call_map.find(uid) == call_map.end() || call_map[uid].empty()) {
-                // This symbol doesn't call anything - connect to END
+                // This function doesn't call anything - connect to END
                 add_call(uid, end_uid);
             }
         }
@@ -147,6 +191,24 @@ struct CallGraph {
     // Get number of symbols (excluding END)
     size_t num_symbols() const {
         return symbol_to_uid.size() - (end_uid != INVALID_UID ? 1 : 0);
+    }
+    
+    // Get number of functions
+    size_t num_functions() const {
+        size_t count = 0;
+        for (const auto& [uid, type] : symbol_types) {
+            if (type == SymbolType::Function) count++;
+        }
+        return count;
+    }
+    
+    // Get number of variables
+    size_t num_variables() const {
+        size_t count = 0;
+        for (const auto& [uid, type] : symbol_types) {
+            if (type == SymbolType::Variable) count++;
+        }
+        return count;
     }
 };
 

@@ -259,4 +259,160 @@ void QueryEngine::dfs_backward(SymbolUID start, SymbolUID end, PathCallback& cal
     }
 }
 
+// ============ Data Flow Queries (v1.1.0) ============
+
+std::vector<std::string> QueryEngine::data_sources(const std::string& variable) const {
+    std::vector<std::string> sources;
+    
+    SymbolUID var_uid = graph_.get_uid(variable);
+    if (var_uid == INVALID_UID) return sources;
+    
+    // Get direct data sources
+    const auto& source_uids = graph_.get_data_sources(var_uid);
+    for (SymbolUID uid : source_uids) {
+        std::string name = graph_.get_symbol(uid);
+        if (!name.empty()) {
+            sources.push_back(name);
+        }
+    }
+    
+    std::sort(sources.begin(), sources.end());
+    return sources;
+}
+
+std::vector<std::string> QueryEngine::data_sinks(const std::string& source) const {
+    std::vector<std::string> sinks;
+    
+    SymbolUID src_uid = graph_.get_uid(source);
+    if (src_uid == INVALID_UID) return sinks;
+    
+    // Get variables this flows to
+    const auto& sink_uids = graph_.get_data_sinks(src_uid);
+    for (SymbolUID uid : sink_uids) {
+        std::string name = graph_.get_symbol(uid);
+        if (!name.empty()) {
+            sinks.push_back(name);
+        }
+    }
+    
+    std::sort(sinks.begin(), sinks.end());
+    return sinks;
+}
+
+std::vector<std::string> QueryEngine::variables_in(const std::string& func_pattern) const {
+    std::vector<std::string> vars;
+    
+    for (const auto& symbol : graph_.get_all_symbols()) {
+        // Check if it's a variable
+        SymbolUID uid = graph_.get_uid(symbol);
+        if (uid == INVALID_UID) continue;
+        if (!graph_.is_variable(uid)) continue;
+        
+        // Check if it matches the function pattern (belongs to that function)
+        if (symbol.find(func_pattern) != std::string::npos) {
+            vars.push_back(symbol);
+        }
+    }
+    
+    std::sort(vars.begin(), vars.end());
+    return vars;
+}
+
+void QueryEngine::find_data_flow_paths(const std::string& source,
+                                        const std::string& variable,
+                                        PathCallback callback) {
+    SymbolUID src_uid = graph_.get_uid(source);
+    SymbolUID var_uid = graph_.get_uid(variable);
+    
+    if (src_uid == INVALID_UID) {
+        std::cerr << "Error: Source symbol not found: " << source << std::endl;
+        return;
+    }
+    
+    if (var_uid == INVALID_UID) {
+        std::cerr << "Error: Variable not found: " << variable << std::endl;
+        return;
+    }
+    
+    dfs_data_flow(src_uid, var_uid, callback);
+}
+
+void QueryEngine::dfs_data_flow(SymbolUID source, SymbolUID target, PathCallback& callback) {
+    // State for iterative DFS through data flow graph
+    struct State {
+        SymbolUID node;
+        size_t sink_index;
+        std::vector<SymbolUID> sinks;
+    };
+    
+    std::stack<State> stack;
+    std::vector<SymbolUID> current_path;
+    std::unordered_set<SymbolUID> in_path;
+    
+    // Initialize with source
+    State initial;
+    initial.node = source;
+    initial.sink_index = 0;
+    const auto& init_sinks = graph_.get_data_sinks(source);
+    initial.sinks.assign(init_sinks.begin(), init_sinks.end());
+    
+    stack.push(initial);
+    current_path.push_back(source);
+    in_path.insert(source);
+    
+    while (!stack.empty()) {
+        State& state = stack.top();
+        
+        // Found target
+        if (state.node == target && current_path.size() > 1) {
+            // Build path with symbol names
+            std::vector<std::string> path;
+            path.reserve(current_path.size());
+            for (SymbolUID uid : current_path) {
+                path.push_back(graph_.get_symbol(uid));
+            }
+            
+            if (!callback(path)) return;
+            
+            // Backtrack
+            in_path.erase(state.node);
+            current_path.pop_back();
+            stack.pop();
+            continue;
+        }
+        
+        // Explore next sink
+        bool found_next = false;
+        while (state.sink_index < state.sinks.size()) {
+            SymbolUID sink = state.sinks[state.sink_index];
+            state.sink_index++;
+            
+            // Skip if already in path (cycle)
+            if (in_path.find(sink) != in_path.end()) {
+                continue;
+            }
+            
+            // Push new state
+            State next;
+            next.node = sink;
+            next.sink_index = 0;
+            const auto& next_sinks = graph_.get_data_sinks(sink);
+            next.sinks.assign(next_sinks.begin(), next_sinks.end());
+            
+            stack.push(next);
+            current_path.push_back(sink);
+            in_path.insert(sink);
+            found_next = true;
+            break;
+        }
+        
+        // If no more sinks to explore, backtrack
+        if (!found_next) {
+            in_path.erase(state.node);
+            current_path.pop_back();
+            stack.pop();
+        }
+    }
+}
+
 } // namespace pioneer

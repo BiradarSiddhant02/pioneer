@@ -36,6 +36,17 @@ struct FunctionCall {
     TSNode node;
 };
 
+// Parsed variable assignment
+struct VariableDef {
+    std::string name;               // Variable name
+    std::string qualified_name;     // Fully qualified: func_name::var_name or class.var
+    std::string containing_func;    // Function where variable is defined/assigned
+    std::string value_source;       // Right-hand side source (function name, variable, or "literal")
+    bool from_function_call;        // Is the value from a function call?
+    uint32_t line;
+    TSNode node;
+};
+
 // Parser for a single language
 class LanguageParser {
 public:
@@ -58,6 +69,9 @@ public:
     
     // Extract function calls within a function
     std::vector<FunctionCall> extract_calls(const FunctionDef& func) const;
+    
+    // Extract variable assignments within a function
+    std::vector<VariableDef> extract_variables(const FunctionDef& func) const;
     
     // Get root node
     TSNode root() const;
@@ -85,6 +99,10 @@ private:
     std::vector<FunctionCall> extract_calls_python(const FunctionDef& func) const;
     std::vector<FunctionCall> extract_calls_c(const FunctionDef& func) const;
     std::vector<FunctionCall> extract_calls_cpp(const FunctionDef& func) const;
+    
+    std::vector<VariableDef> extract_variables_python(const FunctionDef& func) const;
+    std::vector<VariableDef> extract_variables_c(const FunctionDef& func) const;
+    std::vector<VariableDef> extract_variables_cpp(const FunctionDef& func) const;
     
     // Recursive node visitor
     void visit_nodes(TSNode node, const std::function<void(TSNode)>& visitor) const;

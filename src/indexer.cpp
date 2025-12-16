@@ -79,7 +79,8 @@ std::vector<fs::path> Indexer::discover_files() {
 
 bool Indexer::parse_file(const fs::path& filepath,
                           std::vector<FunctionInfo>& functions_out,
-                          std::vector<CallInfo>& calls_out) {
+                          std::vector<CallInfo>& calls_out,
+                          std::vector<VariableInfo>& variables_out) {
     // Read file
     std::ifstream file(filepath);
     if (!file.is_open()) return false;
@@ -130,6 +131,17 @@ bool Indexer::parse_file(const fs::path& filepath,
             ci.callee_name = call.qualified_name.empty() ? call.name : call.qualified_name;
             calls_out.push_back(std::move(ci));
         }
+        
+        // Extract variables for this function (v1.1.0)
+        auto vars = parser->extract_variables(func);
+        for (const auto& var : vars) {
+            VariableInfo vi;
+            vi.qualified_name = var.qualified_name;
+            vi.containing_func = var.containing_func;
+            vi.value_source = var.value_source;
+            vi.from_function_call = var.from_function_call;
+            variables_out.push_back(std::move(vi));
+        }
     }
     
     return true;
@@ -139,21 +151,26 @@ void Indexer::worker_parse_files(const std::vector<fs::path>& files,
                                   size_t start_idx, size_t end_idx,
                                   std::vector<FunctionInfo>& all_functions,
                                   std::vector<CallInfo>& all_calls,
+                                  std::vector<VariableInfo>& all_variables,
                                   std::mutex& functions_mutex,
-                                  std::mutex& calls_mutex) {
+                                  std::mutex& calls_mutex,
+                                  std::mutex& variables_mutex) {
     // Thread-local storage to minimize lock contention
     std::vector<FunctionInfo> local_functions;
     std::vector<CallInfo> local_calls;
+    std::vector<VariableInfo> local_variables;
     local_functions.reserve(1000);
     local_calls.reserve(5000);
+    local_variables.reserve(2000);
     
     for (size_t i = start_idx; i < end_idx; ++i) {
         const auto& filepath = files[i];
         
         std::vector<FunctionInfo> file_functions;
         std::vector<CallInfo> file_calls;
+        std::vector<VariableInfo> file_variables;
         
-        if (parse_file(filepath, file_functions, file_calls)) {
+        if (parse_file(filepath, file_functions, file_calls, file_variables)) {
             // Accumulate locally
             for (auto& f : file_functions) {
                 local_functions.push_back(std::move(f));
@@ -161,10 +178,14 @@ void Indexer::worker_parse_files(const std::vector<fs::path>& files,
             for (auto& c : file_calls) {
                 local_calls.push_back(std::move(c));
             }
+            for (auto& v : file_variables) {
+                local_variables.push_back(std::move(v));
+            }
             
             stats_.files_indexed++;
             stats_.functions_found += file_functions.size();
             stats_.calls_found += file_calls.size();
+            stats_.variables_found += file_variables.size();
             
             // Print progress (with lock to avoid garbled output)
             {
@@ -194,6 +215,16 @@ void Indexer::worker_parse_files(const std::vector<fs::path>& files,
             local_calls.clear();
             local_calls.reserve(5000);
         }
+        if (local_variables.size() > 20000) {
+            {
+                std::lock_guard<std::mutex> lock(variables_mutex);
+                all_variables.insert(all_variables.end(),
+                    std::make_move_iterator(local_variables.begin()),
+                    std::make_move_iterator(local_variables.end()));
+            }
+            local_variables.clear();
+            local_variables.reserve(2000);
+        }
     }
     
     // Final flush
@@ -208,6 +239,12 @@ void Indexer::worker_parse_files(const std::vector<fs::path>& files,
         all_calls.insert(all_calls.end(),
             std::make_move_iterator(local_calls.begin()),
             std::make_move_iterator(local_calls.end()));
+    }
+    if (!local_variables.empty()) {
+        std::lock_guard<std::mutex> lock(variables_mutex);
+        all_variables.insert(all_variables.end(),
+            std::make_move_iterator(local_variables.begin()),
+            std::make_move_iterator(local_variables.end()));
     }
 }
 
@@ -228,12 +265,15 @@ Graph Indexer::index() {
     // Phase 2: Parallel parsing
     std::vector<FunctionInfo> all_functions;
     std::vector<CallInfo> all_calls;
+    std::vector<VariableInfo> all_variables;
     std::mutex functions_mutex;
     std::mutex calls_mutex;
+    std::mutex variables_mutex;
     
     // Reserve estimated space
     all_functions.reserve(files.size() * 20);
     all_calls.reserve(files.size() * 100);
+    all_variables.reserve(files.size() * 50);
     
     // Create worker threads
     std::vector<std::thread> threads;
@@ -248,7 +288,9 @@ Graph Indexer::index() {
         threads.emplace_back(&Indexer::worker_parse_files, this,
                              std::cref(files), start_idx, end_idx,
                              std::ref(all_functions), std::ref(all_calls),
-                             std::ref(functions_mutex), std::ref(calls_mutex));
+                             std::ref(all_variables),
+                             std::ref(functions_mutex), std::ref(calls_mutex),
+                             std::ref(variables_mutex));
     }
     
     // Wait for all threads
@@ -257,7 +299,8 @@ Graph Indexer::index() {
     }
     
     std::cout << "\nParsing complete. Processing " << all_functions.size() 
-              << " functions and " << all_calls.size() << " calls." << std::endl;
+              << " functions, " << all_calls.size() << " calls, and "
+              << all_variables.size() << " variables." << std::endl;
     
     // Phase 3: Detect overloads (single-threaded, but fast)
     std::unordered_map<std::string, std::vector<FunctionInfo*>> name_to_functions;
@@ -374,6 +417,47 @@ Graph Indexer::index() {
         graph.add_call(caller_final, callee_final);
     }
     
+    // Phase 5: Process variables for data flow (v1.1.0)
+    std::cout << "Building data flow graph..." << std::endl;
+    
+    for (const auto& var : all_variables) {
+        // Add variable as a symbol
+        graph.add_symbol(var.qualified_name, SymbolType::Variable);
+        
+        // Track data flow from value source to variable
+        if (!var.value_source.empty()) {
+            // Store the raw value source as the data flow source
+            // This captures: function calls, variable references, member accesses, literals
+            std::string source = var.value_source;
+            
+            // If it's a function call, try to resolve to the function symbol
+            if (var.from_function_call) {
+                std::string source_base = var.value_source;
+                size_t pos = source_base.rfind("::");
+                if (pos != std::string::npos) {
+                    source_base = source_base.substr(pos + 2);
+                }
+                pos = source_base.rfind(".");
+                if (pos != std::string::npos) {
+                    source_base = source_base.substr(pos + 1);
+                }
+                
+                auto match_it = base_to_final_names.find(source_base);
+                if (match_it != base_to_final_names.end() && !match_it->second.empty()) {
+                    source = match_it->second[0];
+                }
+            }
+            
+            // Add the source as a symbol if it doesn't exist
+            if (!graph.has_symbol(source)) {
+                graph.add_symbol(source, var.from_function_call ? SymbolType::Function : SymbolType::Variable);
+            }
+            
+            // Add data flow: source -> variable
+            graph.add_data_flow(source, var.qualified_name);
+        }
+    }
+    
     // Populate indexed_files_
     for (const auto& f : files) {
         indexed_files_.push_back(f.string());
@@ -386,6 +470,7 @@ Graph Indexer::index() {
     std::cout << "  Files indexed: " << stats_.files_indexed.load() << std::endl;
     std::cout << "  Functions found: " << stats_.functions_found.load() << std::endl;
     std::cout << "  Calls found: " << stats_.calls_found.load() << std::endl;
+    std::cout << "  Variables found: " << stats_.variables_found.load() << std::endl;
     std::cout << "  Symbols created: " << graph.call_graph.symbol_to_uid.size() << std::endl;
     
     return graph;

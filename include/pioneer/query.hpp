@@ -39,6 +39,22 @@ public:
     // Print path in human-readable format
     static void print_path(const std::vector<std::string>& path);
     
+    // ============ Data Flow Queries (v1.1.0) ============
+    
+    // Find what a variable is assigned from (data sources)
+    std::vector<std::string> data_sources(const std::string& variable) const;
+    
+    // Find what variables a function's return value flows to
+    std::vector<std::string> data_sinks(const std::string& source) const;
+    
+    // Find all variables in a function
+    std::vector<std::string> variables_in(const std::string& func_pattern) const;
+    
+    // Trace data flow path from source to variable
+    void find_data_flow_paths(const std::string& source,
+                               const std::string& variable,
+                               PathCallback callback);
+    
 private:
     const Graph& graph_;
     
@@ -47,6 +63,9 @@ private:
     
     // Iterative DFS for backward paths (backtrace)
     void dfs_backward(SymbolUID start, SymbolUID end, PathCallback& callback);
+    
+    // DFS for data flow paths
+    void dfs_data_flow(SymbolUID source, SymbolUID target, PathCallback& callback);
 };
 
 } // namespace pioneer

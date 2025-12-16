@@ -46,6 +46,14 @@ struct CallInfo {
     std::string callee_name;
 };
 
+// Variable info for data flow tracking (v1.1.0)
+struct VariableInfo {
+    std::string qualified_name;      // func::var_name
+    std::string containing_func;     // Function that contains this variable
+    std::string value_source;        // What value is assigned
+    bool from_function_call = false; // Is value from a function call?
+};
+
 class Indexer {
 public:
     explicit Indexer(const IndexerConfig& config = IndexerConfig{});
@@ -61,6 +69,7 @@ public:
         std::atomic<size_t> files_indexed{0};
         std::atomic<size_t> functions_found{0};
         std::atomic<size_t> calls_found{0};
+        std::atomic<size_t> variables_found{0};
         std::atomic<size_t> symbols_created{0};
     };
     const Stats& stats() const { return stats_; }
@@ -83,15 +92,18 @@ private:
     // Parse a single file (thread-safe)
     bool parse_file(const fs::path& filepath,
                     std::vector<FunctionInfo>& functions_out,
-                    std::vector<CallInfo>& calls_out);
+                    std::vector<CallInfo>& calls_out,
+                    std::vector<VariableInfo>& variables_out);
     
     // Worker function for thread pool
     void worker_parse_files(const std::vector<fs::path>& files,
                             size_t start_idx, size_t end_idx,
                             std::vector<FunctionInfo>& all_functions,
                             std::vector<CallInfo>& all_calls,
+                            std::vector<VariableInfo>& all_variables,
                             std::mutex& functions_mutex,
-                            std::mutex& calls_mutex);
+                            std::mutex& calls_mutex,
+                            std::mutex& variables_mutex);
 };
 
 } // namespace pioneer

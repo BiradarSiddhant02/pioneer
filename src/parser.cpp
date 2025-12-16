@@ -179,6 +179,19 @@ std::vector<FunctionCall> LanguageParser::extract_calls(const FunctionDef& func)
     }
 }
 
+std::vector<VariableDef> LanguageParser::extract_variables(const FunctionDef& func) const {
+    switch (language_) {
+        case Language::Python:
+            return extract_variables_python(func);
+        case Language::C:
+            return extract_variables_c(func);
+        case Language::Cpp:
+            return extract_variables_cpp(func);
+        default:
+            return {};
+    }
+}
+
 // ============ Python Implementation ============
 
 std::vector<FunctionDef> LanguageParser::extract_functions_python() const {
@@ -600,6 +613,354 @@ std::vector<FunctionCall> LanguageParser::extract_calls_cpp(const FunctionDef& f
     });
     
     return calls;
+}
+
+// ============ Variable Extraction - Python ============
+
+std::vector<VariableDef> LanguageParser::extract_variables_python(const FunctionDef& func) const {
+    std::vector<VariableDef> variables;
+    
+    visit_nodes(func.node, [&](TSNode node) {
+        const char* type = ts_node_type(node);
+        
+        // assignment: left = right
+        if (strcmp(type, "assignment") == 0) {
+            TSNode left = ts_node_child_by_field_name(node, "left", 4);
+            TSNode right = ts_node_child_by_field_name(node, "right", 5);
+            
+            if (!ts_node_is_null(left) && !ts_node_is_null(right)) {
+                const char* left_type = ts_node_type(left);
+                
+                // Helper lambda to extract value source info
+                auto extract_value_info = [&](VariableDef& var, TSNode right_node) {
+                    const char* right_type = ts_node_type(right_node);
+                    if (strcmp(right_type, "call") == 0) {
+                        TSNode func_node = ts_node_child_by_field_name(right_node, "function", 8);
+                        if (!ts_node_is_null(func_node)) {
+                            var.value_source = node_text(func_node);
+                            var.from_function_call = true;
+                        }
+                    } else {
+                        var.value_source = node_text(right_node);
+                        var.from_function_call = false;
+                    }
+                };
+                
+                // Simple variable assignment: x = ...
+                if (strcmp(left_type, "identifier") == 0) {
+                    VariableDef var;
+                    var.name = node_text(left);
+                    var.qualified_name = func.qualified_name + "." + var.name;
+                    var.containing_func = func.qualified_name;
+                    var.line = ts_node_start_point(node).row + 1;
+                    var.node = node;
+                    extract_value_info(var, right);
+                    variables.push_back(var);
+                }
+                // Member assignment: self.field = ..., obj.attr = ...
+                else if (strcmp(left_type, "attribute") == 0) {
+                    VariableDef var;
+                    // Get the full attribute chain (e.g., "self.field" or "obj.attr.subattr")
+                    var.name = node_text(left);
+                    var.qualified_name = func.qualified_name + "." + var.name;
+                    var.containing_func = func.qualified_name;
+                    var.line = ts_node_start_point(node).row + 1;
+                    var.node = node;
+                    extract_value_info(var, right);
+                    variables.push_back(var);
+                }
+                // Subscript assignment: arr[i] = ..., dict["key"] = ...
+                else if (strcmp(left_type, "subscript") == 0) {
+                    VariableDef var;
+                    var.name = node_text(left);
+                    var.qualified_name = func.qualified_name + "." + var.name;
+                    var.containing_func = func.qualified_name;
+                    var.line = ts_node_start_point(node).row + 1;
+                    var.node = node;
+                    extract_value_info(var, right);
+                    variables.push_back(var);
+                }
+                // Tuple/list unpacking: a, b = ...
+                else if (strcmp(left_type, "pattern_list") == 0 ||
+                         strcmp(left_type, "tuple_pattern") == 0) {
+                    uint32_t count = ts_node_child_count(left);
+                    for (uint32_t i = 0; i < count; ++i) {
+                        TSNode child = ts_node_child(left, i);
+                        if (strcmp(ts_node_type(child), "identifier") == 0) {
+                            VariableDef var;
+                            var.name = node_text(child);
+                            var.qualified_name = func.qualified_name + "." + var.name;
+                            var.containing_func = func.qualified_name;
+                            var.line = ts_node_start_point(node).row + 1;
+                            var.node = node;
+                            var.value_source = node_text(right);
+                            var.from_function_call = strcmp(ts_node_type(right), "call") == 0;
+                            variables.push_back(var);
+                        }
+                    }
+                }
+            }
+        }
+        // augmented_assignment: x += ..., x -= ..., etc.
+        else if (strcmp(type, "augmented_assignment") == 0) {
+            TSNode left = ts_node_child_by_field_name(node, "left", 4);
+            TSNode right = ts_node_child_by_field_name(node, "right", 5);
+            
+            if (!ts_node_is_null(left) && strcmp(ts_node_type(left), "identifier") == 0) {
+                VariableDef var;
+                var.name = node_text(left);
+                var.qualified_name = func.qualified_name + "." + var.name;
+                var.containing_func = func.qualified_name;
+                var.line = ts_node_start_point(node).row + 1;
+                var.node = node;
+                var.value_source = ts_node_is_null(right) ? "" : node_text(right);
+                var.from_function_call = !ts_node_is_null(right) && 
+                                          strcmp(ts_node_type(right), "call") == 0;
+                variables.push_back(var);
+            }
+        }
+    });
+    
+    return variables;
+}
+
+// ============ Variable Extraction - C ============
+
+std::vector<VariableDef> LanguageParser::extract_variables_c(const FunctionDef& func) const {
+    std::vector<VariableDef> variables;
+    
+    visit_nodes(func.node, [&](TSNode node) {
+        const char* type = ts_node_type(node);
+        
+        // declaration: int x = value;
+        if (strcmp(type, "declaration") == 0) {
+            // Find declarators in the declaration
+            uint32_t count = ts_node_child_count(node);
+            for (uint32_t i = 0; i < count; ++i) {
+                TSNode child = ts_node_child(node, i);
+                const char* child_type = ts_node_type(child);
+                
+                // init_declarator: x = value
+                if (strcmp(child_type, "init_declarator") == 0) {
+                    TSNode declarator = ts_node_child_by_field_name(child, "declarator", 10);
+                    TSNode value = ts_node_child_by_field_name(child, "value", 5);
+                    
+                    if (!ts_node_is_null(declarator)) {
+                        // Handle pointer declarators and regular identifiers
+                        std::string var_name;
+                        TSNode name_node = declarator;
+                        
+                        while (strcmp(ts_node_type(name_node), "pointer_declarator") == 0 ||
+                               strcmp(ts_node_type(name_node), "array_declarator") == 0) {
+                            TSNode inner = ts_node_child_by_field_name(name_node, "declarator", 10);
+                            if (ts_node_is_null(inner)) break;
+                            name_node = inner;
+                        }
+                        
+                        if (strcmp(ts_node_type(name_node), "identifier") == 0) {
+                            VariableDef var;
+                            var.name = node_text(name_node);
+                            var.qualified_name = func.qualified_name + "::" + var.name;
+                            var.containing_func = func.qualified_name;
+                            var.line = ts_node_start_point(node).row + 1;
+                            var.node = node;
+                            
+                            if (!ts_node_is_null(value)) {
+                                const char* val_type = ts_node_type(value);
+                                if (strcmp(val_type, "call_expression") == 0) {
+                                    TSNode fn = ts_node_child_by_field_name(value, "function", 8);
+                                    var.value_source = ts_node_is_null(fn) ? "" : node_text(fn);
+                                    var.from_function_call = true;
+                                } else {
+                                    var.value_source = node_text(value);
+                                    var.from_function_call = false;
+                                }
+                            }
+                            variables.push_back(var);
+                        }
+                    }
+                }
+            }
+        }
+        // assignment_expression: x = value, obj.field = value, ptr->field = value
+        else if (strcmp(type, "assignment_expression") == 0) {
+            TSNode left = ts_node_child_by_field_name(node, "left", 4);
+            TSNode right = ts_node_child_by_field_name(node, "right", 5);
+            
+            if (!ts_node_is_null(left)) {
+                const char* left_type = ts_node_type(left);
+                VariableDef var;
+                var.line = ts_node_start_point(node).row + 1;
+                var.node = node;
+                var.containing_func = func.qualified_name;
+                
+                // Simple identifier: x = value
+                if (strcmp(left_type, "identifier") == 0) {
+                    var.name = node_text(left);
+                    var.qualified_name = func.qualified_name + "::" + var.name;
+                }
+                // Member access: obj.field = value
+                else if (strcmp(left_type, "field_expression") == 0) {
+                    var.name = node_text(left);
+                    var.qualified_name = func.qualified_name + "::" + var.name;
+                }
+                // Pointer member: ptr->field = value
+                else if (strcmp(left_type, "pointer_expression") == 0) {
+                    var.name = node_text(left);
+                    var.qualified_name = func.qualified_name + "::" + var.name;
+                }
+                // Array subscript: arr[i] = value
+                else if (strcmp(left_type, "subscript_expression") == 0) {
+                    var.name = node_text(left);
+                    var.qualified_name = func.qualified_name + "::" + var.name;
+                }
+                else {
+                    // Skip other types
+                    return;
+                }
+                
+                if (!ts_node_is_null(right)) {
+                    const char* right_type = ts_node_type(right);
+                    if (strcmp(right_type, "call_expression") == 0) {
+                        TSNode fn = ts_node_child_by_field_name(right, "function", 8);
+                        var.value_source = ts_node_is_null(fn) ? "" : node_text(fn);
+                        var.from_function_call = true;
+                    } else {
+                        var.value_source = node_text(right);
+                        var.from_function_call = false;
+                    }
+                }
+                variables.push_back(var);
+            }
+        }
+    });
+    
+    return variables;
+}
+
+// ============ Variable Extraction - C++ ============
+
+std::vector<VariableDef> LanguageParser::extract_variables_cpp(const FunctionDef& func) const {
+    std::vector<VariableDef> variables;
+    
+    visit_nodes(func.node, [&](TSNode node) {
+        const char* type = ts_node_type(node);
+        
+        // declaration: auto x = value; int x = value;
+        if (strcmp(type, "declaration") == 0) {
+            uint32_t count = ts_node_child_count(node);
+            for (uint32_t i = 0; i < count; ++i) {
+                TSNode child = ts_node_child(node, i);
+                const char* child_type = ts_node_type(child);
+                
+                // init_declarator: x = value or x{value} or x(value)
+                if (strcmp(child_type, "init_declarator") == 0) {
+                    TSNode declarator = ts_node_child_by_field_name(child, "declarator", 10);
+                    TSNode value = ts_node_child_by_field_name(child, "value", 5);
+                    
+                    if (!ts_node_is_null(declarator)) {
+                        std::string var_name;
+                        TSNode name_node = declarator;
+                        
+                        // Unwrap pointer/reference/array declarators
+                        while (strcmp(ts_node_type(name_node), "pointer_declarator") == 0 ||
+                               strcmp(ts_node_type(name_node), "reference_declarator") == 0 ||
+                               strcmp(ts_node_type(name_node), "array_declarator") == 0) {
+                            TSNode inner = ts_node_child_by_field_name(name_node, "declarator", 10);
+                            if (ts_node_is_null(inner)) {
+                                // Try first child for reference_declarator
+                                inner = ts_node_child(name_node, 1);
+                                if (ts_node_is_null(inner)) break;
+                            }
+                            name_node = inner;
+                        }
+                        
+                        if (strcmp(ts_node_type(name_node), "identifier") == 0) {
+                            VariableDef var;
+                            var.name = node_text(name_node);
+                            var.qualified_name = func.qualified_name + "::" + var.name;
+                            var.containing_func = func.qualified_name;
+                            var.line = ts_node_start_point(node).row + 1;
+                            var.node = node;
+                            
+                            if (!ts_node_is_null(value)) {
+                                const char* val_type = ts_node_type(value);
+                                if (strcmp(val_type, "call_expression") == 0) {
+                                    TSNode fn = ts_node_child_by_field_name(value, "function", 8);
+                                    var.value_source = ts_node_is_null(fn) ? "" : node_text(fn);
+                                    var.from_function_call = true;
+                                }
+                                else if (strcmp(val_type, "initializer_list") == 0 ||
+                                         strcmp(val_type, "argument_list") == 0) {
+                                    // Brace or paren initialization
+                                    var.value_source = node_text(value);
+                                    var.from_function_call = false;
+                                }
+                                else {
+                                    var.value_source = node_text(value);
+                                    var.from_function_call = false;
+                                }
+                            }
+                            variables.push_back(var);
+                        }
+                    }
+                }
+            }
+        }
+        // assignment_expression: x = value, obj.field = value, ptr->field = value
+        else if (strcmp(type, "assignment_expression") == 0) {
+            TSNode left = ts_node_child_by_field_name(node, "left", 4);
+            TSNode right = ts_node_child_by_field_name(node, "right", 5);
+            
+            if (!ts_node_is_null(left)) {
+                const char* left_type = ts_node_type(left);
+                VariableDef var;
+                var.line = ts_node_start_point(node).row + 1;
+                var.node = node;
+                var.containing_func = func.qualified_name;
+                
+                // Simple identifier: x = value
+                if (strcmp(left_type, "identifier") == 0) {
+                    var.name = node_text(left);
+                    var.qualified_name = func.qualified_name + "::" + var.name;
+                }
+                // Member access: obj.field = value
+                else if (strcmp(left_type, "field_expression") == 0) {
+                    var.name = node_text(left);
+                    var.qualified_name = func.qualified_name + "::" + var.name;
+                }
+                // Pointer member: ptr->field = value
+                else if (strcmp(left_type, "pointer_expression") == 0) {
+                    var.name = node_text(left);
+                    var.qualified_name = func.qualified_name + "::" + var.name;
+                }
+                // Array subscript: arr[i] = value
+                else if (strcmp(left_type, "subscript_expression") == 0) {
+                    var.name = node_text(left);
+                    var.qualified_name = func.qualified_name + "::" + var.name;
+                }
+                else {
+                    // Skip other types
+                    return;
+                }
+                
+                if (!ts_node_is_null(right)) {
+                    const char* right_type = ts_node_type(right);
+                    if (strcmp(right_type, "call_expression") == 0) {
+                        TSNode fn = ts_node_child_by_field_name(right, "function", 8);
+                        var.value_source = ts_node_is_null(fn) ? "" : node_text(fn);
+                        var.from_function_call = true;
+                    } else {
+                        var.value_source = node_text(right);
+                        var.from_function_call = false;
+                    }
+                }
+                variables.push_back(var);
+            }
+        }
+    });
+    
+    return variables;
 }
 
 std::unique_ptr<LanguageParser> create_parser(Language lang) {

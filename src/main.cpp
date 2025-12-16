@@ -9,7 +9,7 @@
 
 using namespace pioneer;
 
-constexpr const char* VERSION = "1.0.0";
+constexpr const char* VERSION = "1.1.0";
 constexpr const char* INDEX_FILE = ".pioneer.json";
 
 void print_banner() {
@@ -154,6 +154,159 @@ int cmd_list_symbols() {
     return 0;
 }
 
+int cmd_data_sources(const std::string& variable) {
+    Graph graph;
+    try {
+        graph = Graph::load(INDEX_FILE);
+    } catch (const std::exception& e) {
+        std::cerr << "Error loading index: " << e.what() << std::endl;
+        std::cerr << "Please run 'pioneer --index' first." << std::endl;
+        return 1;
+    }
+    
+    QueryEngine engine(graph);
+    
+    if (!engine.has_symbol(variable)) {
+        std::cerr << "Error: Variable not found: " << variable << std::endl;
+        auto matches = engine.find_symbols(variable);
+        if (!matches.empty()) {
+            std::cerr << "Did you mean one of these?" << std::endl;
+            for (size_t i = 0; i < std::min(matches.size(), size_t(5)); ++i) {
+                std::cerr << "  " << matches[i] << std::endl;
+            }
+        }
+        return 1;
+    }
+    
+    auto sources = engine.data_sources(variable);
+    std::cout << "Data sources for " << variable << ":" << std::endl;
+    if (sources.empty()) {
+        std::cout << "  (no sources found)" << std::endl;
+    } else {
+        for (const auto& src : sources) {
+            std::cout << "  <- " << src << std::endl;
+        }
+    }
+    
+    return 0;
+}
+
+int cmd_data_sinks(const std::string& source) {
+    Graph graph;
+    try {
+        graph = Graph::load(INDEX_FILE);
+    } catch (const std::exception& e) {
+        std::cerr << "Error loading index: " << e.what() << std::endl;
+        std::cerr << "Please run 'pioneer --index' first." << std::endl;
+        return 1;
+    }
+    
+    QueryEngine engine(graph);
+    
+    if (!engine.has_symbol(source)) {
+        std::cerr << "Error: Symbol not found: " << source << std::endl;
+        auto matches = engine.find_symbols(source);
+        if (!matches.empty()) {
+            std::cerr << "Did you mean one of these?" << std::endl;
+            for (size_t i = 0; i < std::min(matches.size(), size_t(5)); ++i) {
+                std::cerr << "  " << matches[i] << std::endl;
+            }
+        }
+        return 1;
+    }
+    
+    auto sinks = engine.data_sinks(source);
+    std::cout << "Data flows from " << source << " to:" << std::endl;
+    if (sinks.empty()) {
+        std::cout << "  (no sinks found)" << std::endl;
+    } else {
+        for (const auto& sink : sinks) {
+            std::cout << "  -> " << sink << std::endl;
+        }
+    }
+    
+    return 0;
+}
+
+int cmd_list_variables(const std::string& func_pattern) {
+    Graph graph;
+    try {
+        graph = Graph::load(INDEX_FILE);
+    } catch (const std::exception& e) {
+        std::cerr << "Error loading index: " << e.what() << std::endl;
+        std::cerr << "Please run 'pioneer --index' first." << std::endl;
+        return 1;
+    }
+    
+    QueryEngine engine(graph);
+    auto vars = engine.variables_in(func_pattern);
+    
+    std::cout << "Variables matching '" << func_pattern << "':" << std::endl;
+    if (vars.empty()) {
+        std::cout << "  (none found)" << std::endl;
+    } else {
+        for (const auto& var : vars) {
+            std::cout << "  " << var << std::endl;
+        }
+    }
+    
+    return 0;
+}
+
+int cmd_find_member(const std::string& member_pattern) {
+    Graph graph;
+    try {
+        graph = Graph::load(INDEX_FILE);
+    } catch (const std::exception& e) {
+        std::cerr << "Error loading index: " << e.what() << std::endl;
+        std::cerr << "Please run 'pioneer --index' first." << std::endl;
+        return 1;
+    }
+    
+    QueryEngine engine(graph);
+    
+    // Find all variables that contain the member pattern
+    // e.g., searching for "gib_dev->gctx" matches "func::gib_dev->gctx"
+    std::vector<std::string> matches;
+    for (const auto& symbol : graph.get_all_symbols()) {
+        SymbolUID uid = graph.get_uid(symbol);
+        if (uid == INVALID_UID) continue;
+        if (!graph.is_variable(uid)) continue;
+        
+        // Check if the variable name contains the member pattern
+        // Also check if the last part of the qualified name matches
+        size_t last_sep = symbol.rfind("::");
+        std::string var_part = (last_sep != std::string::npos) ? symbol.substr(last_sep + 2) : symbol;
+        
+        if (var_part.find(member_pattern) != std::string::npos || 
+            symbol.find(member_pattern) != std::string::npos) {
+            matches.push_back(symbol);
+        }
+    }
+    
+    std::sort(matches.begin(), matches.end());
+    
+    std::cout << "Assignments to '" << member_pattern << "':" << std::endl;
+    if (matches.empty()) {
+        std::cout << "  (none found)" << std::endl;
+    } else {
+        for (const auto& var : matches) {
+            // Show the function and the source value
+            auto sources = engine.data_sources(var);
+            std::cout << "  " << var;
+            if (!sources.empty()) {
+                std::cout << " <- " << sources[0];
+                for (size_t i = 1; i < sources.size(); ++i) {
+                    std::cout << ", " << sources[i];
+                }
+            }
+            std::cout << std::endl;
+        }
+    }
+    
+    return 0;
+}
+
 int main(int argc, char* argv[]) {
     cxxopts::Options options("pioneer", "Call Graph Analyzer - Build and query call graphs for Python, C, and C++ code");
     
@@ -166,6 +319,10 @@ int main(int argc, char* argv[]) {
         ("e,end", "End symbol (use END to find all paths)", cxxopts::value<std::string>()->default_value(""))
         ("b,backtrace", "Enable backtrace mode (find all callers)")
         ("l,list", "List all indexed symbols")
+        ("data-sources", "Find what a variable is assigned from", cxxopts::value<std::string>()->default_value(""))
+        ("data-sinks", "Find what variables a function/symbol flows to", cxxopts::value<std::string>()->default_value(""))
+        ("vars", "List variables in a function (pattern match)", cxxopts::value<std::string>()->default_value(""))
+        ("member", "Find all assignments to a struct member pattern", cxxopts::value<std::string>()->default_value(""))
     ;
     
     try {
@@ -182,6 +339,11 @@ int main(int argc, char* argv[]) {
             std::cout << "  pioneer --start START --end bar    Backtrace: find all callers of bar" << std::endl;
             std::cout << "  pioneer --backtrace --end bar      Same as above (backtrace mode)" << std::endl;
             std::cout << "  pioneer --list                     List all indexed symbols" << std::endl;
+            std::cout << "\nData Flow Queries (v1.1.0):" << std::endl;
+            std::cout << "  pioneer --data-sources 'func::x'   Find what variable x is assigned from" << std::endl;
+            std::cout << "  pioneer --data-sinks 'get_data'    Find variables assigned from get_data()" << std::endl;
+            std::cout << "  pioneer --vars 'MyClass'           List all variables in functions matching 'MyClass'" << std::endl;
+            std::cout << "  pioneer --member 'dev->field'      Find ALL assignments to dev->field" << std::endl;
             return 0;
         }
         
@@ -191,7 +353,6 @@ int main(int argc, char* argv[]) {
         }
         
         if (result.count("index")) {
-            print_banner();
             unsigned int num_threads = result["jobs"].as<unsigned int>();
             return cmd_index(num_threads);
         }
@@ -200,12 +361,32 @@ int main(int argc, char* argv[]) {
             return cmd_list_symbols();
         }
         
+        // Data flow queries (v1.1.0)
+        std::string data_sources_var = result["data-sources"].as<std::string>();
+        if (!data_sources_var.empty()) {
+            return cmd_data_sources(data_sources_var);
+        }
+        
+        std::string data_sinks_src = result["data-sinks"].as<std::string>();
+        if (!data_sinks_src.empty()) {
+            return cmd_data_sinks(data_sinks_src);
+        }
+        
+        std::string vars_pattern = result["vars"].as<std::string>();
+        if (!vars_pattern.empty()) {
+            return cmd_list_variables(vars_pattern);
+        }
+        
+        std::string member_pattern = result["member"].as<std::string>();
+        if (!member_pattern.empty()) {
+            return cmd_find_member(member_pattern);
+        }
+        
         std::string start = result["start"].as<std::string>();
         std::string end = result["end"].as<std::string>();
         bool backtrace = result.count("backtrace") > 0;
         
         if (!start.empty() || !end.empty() || backtrace) {
-            print_banner();
             return cmd_query(start, end, backtrace);
         }
         
