@@ -9,16 +9,16 @@
 
 using namespace pioneer;
 
-constexpr const char *VERSION = "1.1.0";
+constexpr const char *VERSION = "1.2.0";
 constexpr const char *INDEX_FILE = ".pioneer.json";
 
 void print_banner() {
     std::cout << R"(
-  ____  _                           
+  ____  _ ...........................                         
  |  _ \(_) ___  _ __   ___  ___ _ __ 
  | |_) | |/ _ \| '_ \ / _ \/ _ \ '__|
- |  __/| | (_) | | | |  __/  __/ |   
- |_|   |_|\___/|_| |_|\___|\___|_|   
+ |  __/| | (_) | | | |  __/  __/ |...   
+ |_|...|_|\___/|_| |_|\___|\___|_|...   
                                      
 )" << "  Call Graph Analyzer v"
               << VERSION << "\n"
@@ -36,7 +36,6 @@ int cmd_index(unsigned int num_threads) {
     Indexer indexer(config);
     Graph graph = indexer.index();
 
-    // Save to file
     try {
         graph.save(INDEX_FILE);
         std::cout << "\nIndex saved to: " << INDEX_FILE << std::endl;
@@ -48,7 +47,7 @@ int cmd_index(unsigned int num_threads) {
     return 0;
 }
 
-int cmd_search(const std::string &pattern) {
+int cmd_search(const std::string &pattern, const bool nosort) {
     Graph graph;
     try {
         graph = Graph::load(INDEX_FILE);
@@ -60,6 +59,10 @@ int cmd_search(const std::string &pattern) {
 
     QueryEngine engine(graph);
     auto matches = engine.find_symbols(pattern);
+
+    if (!nosort) {
+        std::sort(matches.begin(), matches.end());
+    }
 
     std::cout << "Symbols matching '" << pattern << "' (" << matches.size() << "):" << std::endl;
     if (matches.empty()) {
@@ -74,8 +77,7 @@ int cmd_search(const std::string &pattern) {
 }
 
 int cmd_query(const std::string &start, const std::string &end, bool backtrace,
-              bool pattern_match) {
-    // Load index
+              bool pattern_match, const bool nosort) {
     Graph graph;
     try {
         graph = Graph::load(INDEX_FILE);
@@ -87,11 +89,9 @@ int cmd_query(const std::string &start, const std::string &end, bool backtrace,
 
     QueryEngine engine(graph);
 
-    // Determine query mode
     std::string actual_start = start;
     std::string actual_end = end;
 
-    // Backtrace mode: either explicit flag or start == "START"
     if (backtrace || start == "START") {
         actual_start = "START";
         if (actual_end.empty()) {
@@ -100,14 +100,15 @@ int cmd_query(const std::string &start, const std::string &end, bool backtrace,
         }
     }
 
-    // Forward trace: end == "END"
     if (actual_end == "END" && actual_start != "START") {
-        // Forward trace from start to all endpoints
     }
-
-    // Pattern matching mode: resolve patterns to actual symbols
     if (pattern_match && actual_start != "START") {
         auto matches = engine.find_symbols(actual_start);
+
+        if (!nosort) {
+            std::sort(matches.begin(), matches.end());
+        }
+
         if (matches.empty()) {
             std::cerr << "Error: No symbols matching pattern: " << actual_start << std::endl;
             return 1;
@@ -125,6 +126,11 @@ int cmd_query(const std::string &start, const std::string &end, bool backtrace,
 
     if (pattern_match && actual_end != "END") {
         auto matches = engine.find_symbols(actual_end);
+
+        if (!nosort) {
+            std::sort(matches.begin(), matches.end());
+        }
+
         if (matches.empty()) {
             std::cerr << "Error: No symbols matching pattern: " << actual_end << std::endl;
             return 1;
@@ -140,12 +146,15 @@ int cmd_query(const std::string &start, const std::string &end, bool backtrace,
         actual_end = matches[0];
     }
 
-    // Validate symbols
     if (actual_start != "START" && !engine.has_symbol(actual_start)) {
         std::cerr << "Error: Start symbol not found: " << actual_start << std::endl;
 
-        // Suggest similar symbols
         auto matches = engine.find_symbols(actual_start);
+
+        if (!nosort) {
+            std::sort(matches.begin(), matches.end());
+        }
+
         if (!matches.empty()) {
             std::cerr << "Did you mean one of these?" << std::endl;
             for (size_t i = 0; i < std::min(matches.size(), size_t(5)); ++i) {
@@ -158,8 +167,12 @@ int cmd_query(const std::string &start, const std::string &end, bool backtrace,
     if (actual_end != "END" && !engine.has_symbol(actual_end)) {
         std::cerr << "Error: End symbol not found: " << actual_end << std::endl;
 
-        // Suggest similar symbols
         auto matches = engine.find_symbols(actual_end);
+
+        if (!nosort) {
+            std::sort(matches.begin(), matches.end());
+        }
+
         if (!matches.empty()) {
             std::cerr << "Did you mean one of these?" << std::endl;
             for (size_t i = 0; i < std::min(matches.size(), size_t(5)); ++i) {
@@ -169,7 +182,6 @@ int cmd_query(const std::string &start, const std::string &end, bool backtrace,
         return 1;
     }
 
-    // Execute query
     std::cout << "Finding paths";
     if (actual_start == "START") {
         std::cout << " (backtrace to " << actual_end << ")";
@@ -185,7 +197,7 @@ int cmd_query(const std::string &start, const std::string &end, bool backtrace,
         path_count++;
         std::cout << "[" << path_count << "] ";
         QueryEngine::print_path(path);
-        return true; // Continue searching
+        return true;
     });
 
     if (path_count == 0) {
@@ -197,8 +209,7 @@ int cmd_query(const std::string &start, const std::string &end, bool backtrace,
     return 0;
 }
 
-int cmd_list_symbols() {
-    // Load index
+int cmd_list_symbols(const bool nosort) {
     Graph graph;
     try {
         graph = Graph::load(INDEX_FILE);
@@ -208,16 +219,31 @@ int cmd_list_symbols() {
         return 1;
     }
 
-    auto symbols = graph.get_all_symbols();
-    std::cout << "Symbols in index (" << symbols.size() << "):" << std::endl;
-    for (const auto &sym : symbols) {
-        std::cout << "  " << sym << std::endl;
+    const auto& symbol_map = graph.get_symbol_map();
+    
+    std::cout << "Symbols in index (" << symbol_map.size() << "):" << std::endl;
+    
+    if (nosort) {
+        for (const auto &[sym, uid] : symbol_map) {
+            std::cout << "  " << sym << std::endl;
+        }
+    } else {
+        std::vector<std::string> symbols;
+        symbols.reserve(symbol_map.size());
+        for (const auto &[sym, uid] : symbol_map) {
+            symbols.push_back(sym);
+        }
+        std::sort(symbols.begin(), symbols.end());
+        
+        for (const auto &sym : symbols) {
+            std::cout << "  " << sym << std::endl;
+        }
     }
 
     return 0;
 }
 
-int cmd_data_sources(const std::string &variable) {
+int cmd_data_sources(const std::string &variable, const bool nosort) {
     Graph graph;
     try {
         graph = Graph::load(INDEX_FILE);
@@ -232,6 +258,11 @@ int cmd_data_sources(const std::string &variable) {
     if (!engine.has_symbol(variable)) {
         std::cerr << "Error: Variable not found: " << variable << std::endl;
         auto matches = engine.find_symbols(variable);
+
+        if (!nosort) {
+            std::sort(matches.begin(), matches.end());
+        }
+
         if (!matches.empty()) {
             std::cerr << "Did you mean one of these?" << std::endl;
             for (size_t i = 0; i < std::min(matches.size(), size_t(5)); ++i) {
@@ -242,6 +273,11 @@ int cmd_data_sources(const std::string &variable) {
     }
 
     auto sources = engine.data_sources(variable);
+
+    if (!nosort) {
+        std::sort(sources.begin(), sources.end());
+    }
+
     std::cout << "Data sources for " << variable << ":" << std::endl;
     if (sources.empty()) {
         std::cout << "  (no sources found)" << std::endl;
@@ -254,7 +290,7 @@ int cmd_data_sources(const std::string &variable) {
     return 0;
 }
 
-int cmd_data_sinks(const std::string &source) {
+int cmd_data_sinks(const std::string &source, const bool nosort) {
     Graph graph;
     try {
         graph = Graph::load(INDEX_FILE);
@@ -269,6 +305,11 @@ int cmd_data_sinks(const std::string &source) {
     if (!engine.has_symbol(source)) {
         std::cerr << "Error: Symbol not found: " << source << std::endl;
         auto matches = engine.find_symbols(source);
+
+        if (!nosort) {
+            std::sort(matches.begin(), matches.end());
+        }
+
         if (!matches.empty()) {
             std::cerr << "Did you mean one of these?" << std::endl;
             for (size_t i = 0; i < std::min(matches.size(), size_t(5)); ++i) {
@@ -279,6 +320,11 @@ int cmd_data_sinks(const std::string &source) {
     }
 
     auto sinks = engine.data_sinks(source);
+
+    if (!nosort) {
+        std::sort(sinks.begin(), sinks.end());
+    }
+
     std::cout << "Data flows from " << source << " to:" << std::endl;
     if (sinks.empty()) {
         std::cout << "  (no sinks found)" << std::endl;
@@ -291,7 +337,7 @@ int cmd_data_sinks(const std::string &source) {
     return 0;
 }
 
-int cmd_list_variables(const std::string &func_pattern) {
+int cmd_list_variables(const std::string &func_pattern, const bool nosort) {
     Graph graph;
     try {
         graph = Graph::load(INDEX_FILE);
@@ -303,6 +349,10 @@ int cmd_list_variables(const std::string &func_pattern) {
 
     QueryEngine engine(graph);
     auto vars = engine.variables_in(func_pattern);
+
+    if (!nosort) {
+        std::sort(vars.begin(), vars.end());
+    }
 
     std::cout << "Variables matching '" << func_pattern << "':" << std::endl;
     if (vars.empty()) {
@@ -316,7 +366,7 @@ int cmd_list_variables(const std::string &func_pattern) {
     return 0;
 }
 
-int cmd_find_member(const std::string &member_pattern) {
+int cmd_find_member(const std::string &member_pattern, const bool nosort) {
     Graph graph;
     try {
         graph = Graph::load(INDEX_FILE);
@@ -328,18 +378,15 @@ int cmd_find_member(const std::string &member_pattern) {
 
     QueryEngine engine(graph);
 
-    // Find all variables that contain the member pattern
-    // e.g., searching for "gib_dev->gctx" matches "func::gib_dev->gctx"
     std::vector<std::string> matches;
-    for (const auto &symbol : graph.get_all_symbols()) {
-        SymbolUID uid = graph.get_uid(symbol);
+    matches.reserve(256);
+    
+    for (const auto &[symbol, uid] : graph.get_symbol_map()) {
         if (uid == INVALID_UID)
             continue;
         if (!graph.is_variable(uid))
             continue;
 
-        // Check if the variable name contains the member pattern
-        // Also check if the last part of the qualified name matches
         size_t last_sep = symbol.rfind("::");
         std::string var_part =
             (last_sep != std::string::npos) ? symbol.substr(last_sep + 2) : symbol;
@@ -350,14 +397,15 @@ int cmd_find_member(const std::string &member_pattern) {
         }
     }
 
-    std::sort(matches.begin(), matches.end());
+    if (!nosort) {
+        std::sort(matches.begin(), matches.end());
+    }
 
     std::cout << "Assignments to '" << member_pattern << "':" << std::endl;
     if (matches.empty()) {
         std::cout << "  (none found)" << std::endl;
     } else {
         for (const auto &var : matches) {
-            // Show the function and the source value
             auto sources = engine.data_sources(var);
             std::cout << "  " << var;
             if (!sources.empty()) {
@@ -400,6 +448,7 @@ int main(int argc, char *argv[]) {
     opts("search", "Search for symbols matching a pattern",
          cxxopts::value<std::string>()->default_value(""));
     opts("p,pattern", "Enable pattern matching for --start and --end (substring match)");
+    opts("nosort", "Do not sort the list of symbols");
 
     try {
         auto result = options.parse(argc, argv);
@@ -446,40 +495,40 @@ int main(int argc, char *argv[]) {
             return 0;
         }
 
+        bool nosort = result.count("nosort") > 0;
+
         if (result.count("index")) {
             unsigned int num_threads = result["jobs"].as<unsigned int>();
             return cmd_index(num_threads);
         }
 
         if (result.count("list")) {
-            return cmd_list_symbols();
+            return cmd_list_symbols(nosort);
         }
 
-        // Search for symbols by pattern
         std::string search_pattern = result["search"].as<std::string>();
         if (!search_pattern.empty()) {
-            return cmd_search(search_pattern);
+            return cmd_search(search_pattern, nosort);
         }
 
-        // Data flow queries (v1.1.0)
         std::string data_sources_var = result["data-sources"].as<std::string>();
         if (!data_sources_var.empty()) {
-            return cmd_data_sources(data_sources_var);
+            return cmd_data_sources(data_sources_var, nosort);
         }
 
         std::string data_sinks_src = result["data-sinks"].as<std::string>();
         if (!data_sinks_src.empty()) {
-            return cmd_data_sinks(data_sinks_src);
+            return cmd_data_sinks(data_sinks_src, nosort);
         }
 
         std::string vars_pattern = result["vars"].as<std::string>();
         if (!vars_pattern.empty()) {
-            return cmd_list_variables(vars_pattern);
+            return cmd_list_variables(vars_pattern, nosort);
         }
 
         std::string member_pattern = result["member"].as<std::string>();
         if (!member_pattern.empty()) {
-            return cmd_find_member(member_pattern);
+            return cmd_find_member(member_pattern, nosort);
         }
 
         std::string start = result["start"].as<std::string>();
@@ -488,10 +537,9 @@ int main(int argc, char *argv[]) {
         bool pattern_match = result.count("pattern") > 0;
 
         if (!start.empty() || !end.empty() || backtrace) {
-            return cmd_query(start, end, backtrace, pattern_match);
+            return cmd_query(start, end, backtrace, pattern_match, nosort);
         }
 
-        // No command specified
         print_banner();
         std::cout << options.help() << std::endl;
         return 0;

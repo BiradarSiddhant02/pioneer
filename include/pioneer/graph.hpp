@@ -209,6 +209,11 @@ public:
         }
         return symbols;
     }
+
+    // Get direct access to symbol map (more efficient than copying all symbols)
+    const std::unordered_map<std::string, SymbolUID>& get_symbol_map() const {
+        return call_graph.symbol_to_uid;
+    }
 };
 
 } // namespace pioneer

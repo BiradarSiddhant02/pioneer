@@ -11,19 +11,15 @@ QueryEngine::QueryEngine(const Graph &graph) : graph_(graph) {}
 bool QueryEngine::has_symbol(const std::string &name) const { return graph_.has_symbol(name); }
 
 std::vector<std::string> QueryEngine::find_symbols(const std::string &pattern) const {
-    // TODO: Make this function more memory firendly
-    //       - Use batching.
-    //       - Pre-allocate memory
-    //       - Sort only if user requires it
     std::vector<std::string> matches;
+    matches.reserve(256);
 
-    for (const auto &symbol : graph_.get_all_symbols()) {
+    for (const auto &[symbol, uid] : graph_.get_symbol_map()) {
         if (symbol.find(pattern) != std::string::npos) {
             matches.push_back(symbol);
         }
     }
 
-    std::sort(matches.begin(), matches.end());
     return matches;
 }
 
@@ -39,21 +35,21 @@ void QueryEngine::print_path(const std::vector<std::string> &path) {
 
 void QueryEngine::find_paths(const std::string &start, const std::string &end,
                              PathCallback callback) {
-    // Handle special START keyword (backtrace mode)
     if (start == "START") {
         backtrace(end, callback);
         return;
     }
 
-    // Handle special END keyword (forward trace to all leaves)
     if (end == "END") {
         forward_trace(start, callback);
         return;
     }
 
-    // TODO: Exit if start == START and end == END. One of them has to be defines
+    if (start == "START" && end == "END") {
+        std::cerr << "Error: Cannot use both START and END - at least one must be a specific symbol" << std::endl;
+        return;
+    }
 
-    // Regular path finding
     SymbolUID start_uid = graph_.get_uid(start);
     SymbolUID end_uid = graph_.get_uid(end);
 
@@ -78,8 +74,6 @@ void QueryEngine::backtrace(const std::string &symbol, PathCallback callback) {
         return;
     }
 
-    // Find all paths that lead TO this symbol
-    // We traverse the reverse call graph
     dfs_backward(target_uid, INVALID_UID, callback);
 }
 
@@ -91,27 +85,20 @@ void QueryEngine::forward_trace(const std::string &symbol, PathCallback callback
         return;
     }
 
-    // Find all paths from this symbol to END
     SymbolUID end_uid = graph_.end_uid();
     dfs_forward(start_uid, end_uid, callback);
 }
 
-// Iterative DFS for forward path finding (caller -> callee direction)
 void QueryEngine::dfs_forward(SymbolUID start, SymbolUID end, PathCallback &callback) {
-    // State for iterative DFS
-
-    // TODO: This function can be optimized.
     struct State {
         SymbolUID node;
-        size_t callee_index;            // Which callee to explore next
-        std::vector<SymbolUID> callees; // Cached callees
+        size_t callee_index;
+        std::vector<SymbolUID> callees;
     };
 
     std::stack<State> stack;
-    std::vector<SymbolUID> current_path; // TODO: Can this be a deque?
-    std::unordered_set<SymbolUID> in_path; // For cycle detection
-
-    // Initialize
+    std::deque<SymbolUID> current_path;
+    std::unordered_set<SymbolUID> in_path;
     State initial;
     initial.node = start;
     initial.callee_index = 0;
@@ -170,7 +157,6 @@ void QueryEngine::dfs_forward(SymbolUID start, SymbolUID end, PathCallback &call
             break;
         }
 
-        // If no more callees to explore, backtrack
         if (!found_next) {
             in_path.erase(state.node);
             current_path.pop_back();
@@ -179,22 +165,16 @@ void QueryEngine::dfs_forward(SymbolUID start, SymbolUID end, PathCallback &call
     }
 }
 
-// Iterative DFS for backward path finding (callee -> caller direction)
 void QueryEngine::dfs_backward(SymbolUID start, SymbolUID end, PathCallback &callback) {
-    // TODO: Explore same optimizations as QueryEngine::dfs_forward
-
-    // State for iterative DFS
     struct State {
         SymbolUID node;
-        size_t caller_index;            // Which caller to explore next
-        std::vector<SymbolUID> callers; // Cached callers
+        size_t caller_index;
+        std::vector<SymbolUID> callers;
     };
 
     std::stack<State> stack;
-    std::vector<SymbolUID> current_path;
-    std::unordered_set<SymbolUID> in_path; // For cycle detection
-
-    // Initialize
+    std::deque<SymbolUID> current_path;
+    std::unordered_set<SymbolUID> in_path;
     State initial;
     initial.node = start;
     initial.caller_index = 0;
@@ -257,7 +237,6 @@ void QueryEngine::dfs_backward(SymbolUID start, SymbolUID end, PathCallback &cal
             break;
         }
 
-        // If no more callers to explore, backtrack
         if (!found_next) {
             in_path.erase(state.node);
             current_path.pop_back();
@@ -266,8 +245,6 @@ void QueryEngine::dfs_backward(SymbolUID start, SymbolUID end, PathCallback &cal
     }
 }
 
-// ============ Data Flow Queries (v1.1.0) ============
-
 std::vector<std::string> QueryEngine::data_sources(const std::string &variable) const {
     std::vector<std::string> sources;
 
@@ -275,7 +252,6 @@ std::vector<std::string> QueryEngine::data_sources(const std::string &variable) 
     if (var_uid == INVALID_UID)
         return sources;
 
-    // Get direct data sources
     const auto &source_uids = graph_.get_data_sources(var_uid);
     for (SymbolUID uid : source_uids) {
         std::string name = graph_.get_symbol(uid);
@@ -284,7 +260,6 @@ std::vector<std::string> QueryEngine::data_sources(const std::string &variable) 
         }
     }
 
-    std::sort(sources.begin(), sources.end());
     return sources;
 }
 
@@ -295,7 +270,6 @@ std::vector<std::string> QueryEngine::data_sinks(const std::string &source) cons
     if (src_uid == INVALID_UID)
         return sinks;
 
-    // Get variables this flows to
     const auto &sink_uids = graph_.get_data_sinks(src_uid);
     for (SymbolUID uid : sink_uids) {
         std::string name = graph_.get_symbol(uid);
@@ -304,28 +278,24 @@ std::vector<std::string> QueryEngine::data_sinks(const std::string &source) cons
         }
     }
 
-    std::sort(sinks.begin(), sinks.end());
     return sinks;
 }
 
 std::vector<std::string> QueryEngine::variables_in(const std::string &func_pattern) const {
     std::vector<std::string> vars;
-
-    for (const auto &symbol : graph_.get_all_symbols()) {
-        // Check if it's a variable
-        SymbolUID uid = graph_.get_uid(symbol);
+    vars.reserve(128);
+    
+    for (const auto &[symbol, uid] : graph_.get_symbol_map()) {
         if (uid == INVALID_UID)
             continue;
         if (!graph_.is_variable(uid))
             continue;
 
-        // Check if it matches the function pattern (belongs to that function)
         if (symbol.find(func_pattern) != std::string::npos) {
             vars.push_back(symbol);
         }
     }
 
-    std::sort(vars.begin(), vars.end());
     return vars;
 }
 
@@ -348,9 +318,6 @@ void QueryEngine::find_data_flow_paths(const std::string &source, const std::str
 }
 
 void QueryEngine::dfs_data_flow(SymbolUID source, SymbolUID target, PathCallback &callback) {
-    // TODO: Explore same optimizations as QueryEngine::dfs_forward
-
-    // State for iterative DFS through data flow graph
     struct State {
         SymbolUID node;
         size_t sink_index;
@@ -358,10 +325,8 @@ void QueryEngine::dfs_data_flow(SymbolUID source, SymbolUID target, PathCallback
     };
 
     std::stack<State> stack;
-    std::vector<SymbolUID> current_path;
+    std::deque<SymbolUID> current_path;
     std::unordered_set<SymbolUID> in_path;
-
-    // Initialize with source
     State initial;
     initial.node = source;
     initial.sink_index = 0;
@@ -419,7 +384,6 @@ void QueryEngine::dfs_data_flow(SymbolUID source, SymbolUID target, PathCallback
             break;
         }
 
-        // If no more sinks to explore, backtrack
         if (!found_next) {
             in_path.erase(state.node);
             current_path.pop_back();
