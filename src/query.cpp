@@ -11,6 +11,10 @@ QueryEngine::QueryEngine(const Graph &graph) : graph_(graph) {}
 bool QueryEngine::has_symbol(const std::string &name) const { return graph_.has_symbol(name); }
 
 std::vector<std::string> QueryEngine::find_symbols(const std::string &pattern) const {
+    // TODO: Make this function more memory firendly
+    //       - Use batching.
+    //       - Pre-allocate memory
+    //       - Sort only if user requires it
     std::vector<std::string> matches;
 
     for (const auto &symbol : graph_.get_all_symbols()) {
@@ -46,6 +50,8 @@ void QueryEngine::find_paths(const std::string &start, const std::string &end,
         forward_trace(start, callback);
         return;
     }
+
+    // TODO: Exit if start == START and end == END. One of them has to be defines
 
     // Regular path finding
     SymbolUID start_uid = graph_.get_uid(start);
@@ -93,6 +99,8 @@ void QueryEngine::forward_trace(const std::string &symbol, PathCallback callback
 // Iterative DFS for forward path finding (caller -> callee direction)
 void QueryEngine::dfs_forward(SymbolUID start, SymbolUID end, PathCallback &callback) {
     // State for iterative DFS
+
+    // TODO: This function can be optimized.
     struct State {
         SymbolUID node;
         size_t callee_index;            // Which callee to explore next
@@ -100,7 +108,7 @@ void QueryEngine::dfs_forward(SymbolUID start, SymbolUID end, PathCallback &call
     };
 
     std::stack<State> stack;
-    std::vector<SymbolUID> current_path;
+    std::vector<SymbolUID> current_path; // TODO: Can this be a deque?
     std::unordered_set<SymbolUID> in_path; // For cycle detection
 
     // Initialize
@@ -173,6 +181,8 @@ void QueryEngine::dfs_forward(SymbolUID start, SymbolUID end, PathCallback &call
 
 // Iterative DFS for backward path finding (callee -> caller direction)
 void QueryEngine::dfs_backward(SymbolUID start, SymbolUID end, PathCallback &callback) {
+    // TODO: Explore same optimizations as QueryEngine::dfs_forward
+
     // State for iterative DFS
     struct State {
         SymbolUID node;
@@ -338,6 +348,8 @@ void QueryEngine::find_data_flow_paths(const std::string &source, const std::str
 }
 
 void QueryEngine::dfs_data_flow(SymbolUID source, SymbolUID target, PathCallback &callback) {
+    // TODO: Explore same optimizations as QueryEngine::dfs_forward
+
     // State for iterative DFS through data flow graph
     struct State {
         SymbolUID node;
