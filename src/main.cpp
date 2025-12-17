@@ -48,7 +48,33 @@ int cmd_index(unsigned int num_threads) {
     return 0;
 }
 
-int cmd_query(const std::string &start, const std::string &end, bool backtrace) {
+int cmd_search(const std::string &pattern) {
+    Graph graph;
+    try {
+        graph = Graph::load(INDEX_FILE);
+    } catch (const std::exception &e) {
+        std::cerr << "Error loading index: " << e.what() << std::endl;
+        std::cerr << "Please run 'pioneer --index' first." << std::endl;
+        return 1;
+    }
+
+    QueryEngine engine(graph);
+    auto matches = engine.find_symbols(pattern);
+
+    std::cout << "Symbols matching '" << pattern << "' (" << matches.size() << "):" << std::endl;
+    if (matches.empty()) {
+        std::cout << "  (none found)" << std::endl;
+    } else {
+        for (const auto &sym : matches) {
+            std::cout << "  " << sym << std::endl;
+        }
+    }
+
+    return 0;
+}
+
+int cmd_query(const std::string &start, const std::string &end, bool backtrace,
+              bool pattern_match) {
     // Load index
     Graph graph;
     try {
@@ -77,6 +103,41 @@ int cmd_query(const std::string &start, const std::string &end, bool backtrace) 
     // Forward trace: end == "END"
     if (actual_end == "END" && actual_start != "START") {
         // Forward trace from start to all endpoints
+    }
+
+    // Pattern matching mode: resolve patterns to actual symbols
+    if (pattern_match && actual_start != "START") {
+        auto matches = engine.find_symbols(actual_start);
+        if (matches.empty()) {
+            std::cerr << "Error: No symbols matching pattern: " << actual_start << std::endl;
+            return 1;
+        }
+        if (matches.size() > 1) {
+            std::cout << "Start pattern '" << actual_start
+                      << "' matches multiple symbols:" << std::endl;
+            for (size_t i = 0; i < matches.size(); ++i) {
+                std::cout << "  [" << (i + 1) << "] " << matches[i] << std::endl;
+            }
+            std::cout << "Using first match: " << matches[0] << std::endl;
+        }
+        actual_start = matches[0];
+    }
+
+    if (pattern_match && actual_end != "END") {
+        auto matches = engine.find_symbols(actual_end);
+        if (matches.empty()) {
+            std::cerr << "Error: No symbols matching pattern: " << actual_end << std::endl;
+            return 1;
+        }
+        if (matches.size() > 1) {
+            std::cout << "End pattern '" << actual_end
+                      << "' matches multiple symbols:" << std::endl;
+            for (size_t i = 0; i < matches.size(); ++i) {
+                std::cout << "  [" << (i + 1) << "] " << matches[i] << std::endl;
+            }
+            std::cout << "Using first match: " << matches[0] << std::endl;
+        }
+        actual_end = matches[0];
     }
 
     // Validate symbols
@@ -336,6 +397,9 @@ int main(int argc, char *argv[]) {
          cxxopts::value<std::string>()->default_value(""));
     opts("member", "Find all assignments to a struct member pattern",
          cxxopts::value<std::string>()->default_value(""));
+    opts("search", "Search for symbols matching a pattern",
+         cxxopts::value<std::string>()->default_value(""));
+    opts("p,pattern", "Enable pattern matching for --start and --end (substring match)");
 
     try {
         auto result = options.parse(argc, argv);
@@ -357,6 +421,10 @@ int main(int argc, char *argv[]) {
             std::cout << "  pioneer --backtrace --end bar      Same as above (backtrace mode)"
                       << std::endl;
             std::cout << "  pioneer --list                     List all indexed symbols"
+                      << std::endl;
+            std::cout << "  pioneer --search 'init'            Search for symbols matching 'init'"
+                      << std::endl;
+            std::cout << "  pioneer -p --start foo --end bar   Pattern match start/end symbols"
                       << std::endl;
             std::cout << "\nData Flow Queries (v1.1.0):" << std::endl;
             std::cout
@@ -387,6 +455,12 @@ int main(int argc, char *argv[]) {
             return cmd_list_symbols();
         }
 
+        // Search for symbols by pattern
+        std::string search_pattern = result["search"].as<std::string>();
+        if (!search_pattern.empty()) {
+            return cmd_search(search_pattern);
+        }
+
         // Data flow queries (v1.1.0)
         std::string data_sources_var = result["data-sources"].as<std::string>();
         if (!data_sources_var.empty()) {
@@ -411,9 +485,10 @@ int main(int argc, char *argv[]) {
         std::string start = result["start"].as<std::string>();
         std::string end = result["end"].as<std::string>();
         bool backtrace = result.count("backtrace") > 0;
+        bool pattern_match = result.count("pattern") > 0;
 
         if (!start.empty() || !end.empty() || backtrace) {
-            return cmd_query(start, end, backtrace);
+            return cmd_query(start, end, backtrace, pattern_match);
         }
 
         // No command specified
