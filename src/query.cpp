@@ -12,7 +12,7 @@ bool QueryEngine::has_symbol(const std::string &name) const { return graph_.has_
 
 std::vector<std::string> QueryEngine::find_symbols(const std::string &pattern) const {
     std::vector<std::string> matches;
-    matches.reserve(256);
+    matches.reserve(static_cast<size_t>(graph_.end_uid()));
 
     for (const auto &[symbol, uid] : graph_.get_symbol_map()) {
         if (symbol.find(pattern) != std::string::npos) {
