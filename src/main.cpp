@@ -47,13 +47,58 @@ int cmd_index(unsigned int num_threads) {
     return 0;
 }
 
-int cmd_search(const std::string &pattern, const bool nosort) {
-    Graph graph;
+// Helper function to load the graph from index file
+bool load_graph(Graph &graph) {
     try {
         graph = Graph::load(INDEX_FILE);
+        return true;
     } catch (const std::exception &e) {
         std::cerr << "Error loading index: " << e.what() << std::endl;
         std::cerr << "Please run 'pioneer --index' first." << std::endl;
+        return false;
+    }
+}
+
+// Helper function to validate symbol exists, with suggestions if not found
+bool validate_symbol(const QueryEngine &engine, const std::string &symbol,
+                     const std::string &symbol_type_name, const bool nosort) {
+    if (engine.has_symbol(symbol)) {
+        return true;
+    }
+
+    std::cerr << "Error: " << symbol_type_name << " not found: " << symbol << std::endl;
+    auto matches = engine.find_symbols(symbol);
+
+    if (!nosort) {
+        std::sort(matches.begin(), matches.end());
+    }
+
+    if (!matches.empty()) {
+        std::cerr << "Did you mean one of these?" << std::endl;
+        for (size_t i = 0; i < std::min(matches.size(), size_t(5)); ++i) {
+            std::cerr << "  " << matches[i] << std::endl;
+        }
+    }
+    return false;
+}
+
+// Helper to convert SymbolType enum to string
+const char *symbol_type_to_string(SymbolType type) {
+    switch (type) {
+    case SymbolType::Function:
+        return "function";
+    case SymbolType::Variable:
+        return "variable";
+    case SymbolType::End:
+        return "end";
+    default:
+        return "unknown";
+    }
+}
+
+int cmd_search(const std::string &pattern, const bool nosort) {
+    Graph graph;
+    if (!load_graph(graph)) {
         return 1;
     }
 
@@ -76,14 +121,10 @@ int cmd_search(const std::string &pattern, const bool nosort) {
     return 0;
 }
 
-int cmd_query(const std::string &start, const std::string &end, bool backtrace,
-              bool pattern_match, const bool nosort) {
+int cmd_query(const std::string &start, const std::string &end, bool backtrace, bool pattern_match,
+              const bool nosort) {
     Graph graph;
-    try {
-        graph = Graph::load(INDEX_FILE);
-    } catch (const std::exception &e) {
-        std::cerr << "Error loading index: " << e.what() << std::endl;
-        std::cerr << "Please run 'pioneer --index' first." << std::endl;
+    if (!load_graph(graph)) {
         return 1;
     }
 
@@ -146,39 +187,11 @@ int cmd_query(const std::string &start, const std::string &end, bool backtrace,
         actual_end = matches[0];
     }
 
-    if (actual_start != "START" && !engine.has_symbol(actual_start)) {
-        std::cerr << "Error: Start symbol not found: " << actual_start << std::endl;
-
-        auto matches = engine.find_symbols(actual_start);
-
-        if (!nosort) {
-            std::sort(matches.begin(), matches.end());
-        }
-
-        if (!matches.empty()) {
-            std::cerr << "Did you mean one of these?" << std::endl;
-            for (size_t i = 0; i < std::min(matches.size(), size_t(5)); ++i) {
-                std::cerr << "  " << matches[i] << std::endl;
-            }
-        }
+    if (actual_start != "START" && !validate_symbol(engine, actual_start, "Start symbol", nosort)) {
         return 1;
     }
 
-    if (actual_end != "END" && !engine.has_symbol(actual_end)) {
-        std::cerr << "Error: End symbol not found: " << actual_end << std::endl;
-
-        auto matches = engine.find_symbols(actual_end);
-
-        if (!nosort) {
-            std::sort(matches.begin(), matches.end());
-        }
-
-        if (!matches.empty()) {
-            std::cerr << "Did you mean one of these?" << std::endl;
-            for (size_t i = 0; i < std::min(matches.size(), size_t(5)); ++i) {
-                std::cerr << "  " << matches[i] << std::endl;
-            }
-        }
+    if (actual_end != "END" && !validate_symbol(engine, actual_end, "End symbol", nosort)) {
         return 1;
     }
 
@@ -211,18 +224,14 @@ int cmd_query(const std::string &start, const std::string &end, bool backtrace,
 
 int cmd_list_symbols(const bool nosort) {
     Graph graph;
-    try {
-        graph = Graph::load(INDEX_FILE);
-    } catch (const std::exception &e) {
-        std::cerr << "Error loading index: " << e.what() << std::endl;
-        std::cerr << "Please run 'pioneer --index' first." << std::endl;
+    if (!load_graph(graph)) {
         return 1;
     }
 
-    const auto& symbol_map = graph.get_symbol_map();
-    
+    const auto &symbol_map = graph.get_symbol_map();
+
     std::cout << "Symbols in index (" << symbol_map.size() << "):" << std::endl;
-    
+
     if (nosort) {
         for (const auto &[sym, uid] : symbol_map) {
             std::cout << "  " << sym << std::endl;
@@ -234,7 +243,7 @@ int cmd_list_symbols(const bool nosort) {
             symbols.push_back(sym);
         }
         std::sort(symbols.begin(), symbols.end());
-        
+
         for (const auto &sym : symbols) {
             std::cout << "  " << sym << std::endl;
         }
@@ -243,32 +252,35 @@ int cmd_list_symbols(const bool nosort) {
     return 0;
 }
 
-int cmd_data_sources(const std::string &variable, const bool nosort) {
+int cmd_type(const std::string &symbol, const bool nosort) {
     Graph graph;
-    try {
-        graph = Graph::load(INDEX_FILE);
-    } catch (const std::exception &e) {
-        std::cerr << "Error loading index: " << e.what() << std::endl;
-        std::cerr << "Please run 'pioneer --index' first." << std::endl;
+    if (!load_graph(graph)) {
         return 1;
     }
 
     QueryEngine engine(graph);
 
-    if (!engine.has_symbol(variable)) {
-        std::cerr << "Error: Variable not found: " << variable << std::endl;
-        auto matches = engine.find_symbols(variable);
+    if (!validate_symbol(engine, symbol, "Symbol", nosort)) {
+        return 1;
+    }
 
-        if (!nosort) {
-            std::sort(matches.begin(), matches.end());
-        }
+    SymbolUID uid = graph.get_uid(symbol);
+    SymbolType type = graph.call_graph.get_type(uid);
 
-        if (!matches.empty()) {
-            std::cerr << "Did you mean one of these?" << std::endl;
-            for (size_t i = 0; i < std::min(matches.size(), size_t(5)); ++i) {
-                std::cerr << "  " << matches[i] << std::endl;
-            }
-        }
+    std::cout << symbol << ": " << symbol_type_to_string(type) << std::endl;
+
+    return 0;
+}
+
+int cmd_data_sources(const std::string &variable, const bool nosort) {
+    Graph graph;
+    if (!load_graph(graph)) {
+        return 1;
+    }
+
+    QueryEngine engine(graph);
+
+    if (!validate_symbol(engine, variable, "Variable", nosort)) {
         return 1;
     }
 
@@ -292,30 +304,13 @@ int cmd_data_sources(const std::string &variable, const bool nosort) {
 
 int cmd_data_sinks(const std::string &source, const bool nosort) {
     Graph graph;
-    try {
-        graph = Graph::load(INDEX_FILE);
-    } catch (const std::exception &e) {
-        std::cerr << "Error loading index: " << e.what() << std::endl;
-        std::cerr << "Please run 'pioneer --index' first." << std::endl;
+    if (!load_graph(graph)) {
         return 1;
     }
 
     QueryEngine engine(graph);
 
-    if (!engine.has_symbol(source)) {
-        std::cerr << "Error: Symbol not found: " << source << std::endl;
-        auto matches = engine.find_symbols(source);
-
-        if (!nosort) {
-            std::sort(matches.begin(), matches.end());
-        }
-
-        if (!matches.empty()) {
-            std::cerr << "Did you mean one of these?" << std::endl;
-            for (size_t i = 0; i < std::min(matches.size(), size_t(5)); ++i) {
-                std::cerr << "  " << matches[i] << std::endl;
-            }
-        }
+    if (!validate_symbol(engine, source, "Symbol", nosort)) {
         return 1;
     }
 
@@ -339,11 +334,7 @@ int cmd_data_sinks(const std::string &source, const bool nosort) {
 
 int cmd_list_variables(const std::string &func_pattern, const bool nosort) {
     Graph graph;
-    try {
-        graph = Graph::load(INDEX_FILE);
-    } catch (const std::exception &e) {
-        std::cerr << "Error loading index: " << e.what() << std::endl;
-        std::cerr << "Please run 'pioneer --index' first." << std::endl;
+    if (!load_graph(graph)) {
         return 1;
     }
 
@@ -368,11 +359,7 @@ int cmd_list_variables(const std::string &func_pattern, const bool nosort) {
 
 int cmd_find_member(const std::string &member_pattern, const bool nosort) {
     Graph graph;
-    try {
-        graph = Graph::load(INDEX_FILE);
-    } catch (const std::exception &e) {
-        std::cerr << "Error loading index: " << e.what() << std::endl;
-        std::cerr << "Please run 'pioneer --index' first." << std::endl;
+    if (!load_graph(graph)) {
         return 1;
     }
 
@@ -380,7 +367,7 @@ int cmd_find_member(const std::string &member_pattern, const bool nosort) {
 
     std::vector<std::string> matches;
     matches.reserve(256);
-    
+
     for (const auto &[symbol, uid] : graph.get_symbol_map()) {
         if (uid == INVALID_UID)
             continue;
@@ -449,6 +436,8 @@ int main(int argc, char *argv[]) {
          cxxopts::value<std::string>()->default_value(""));
     opts("p,pattern", "Enable pattern matching for --start and --end (substring match)");
     opts("nosort", "Do not sort the list of symbols");
+    opts("type", "Prints type of symbol (function/variable)",
+         cxxopts::value<std::string>()->default_value(""));
 
     try {
         auto result = options.parse(argc, argv);
@@ -504,6 +493,13 @@ int main(int argc, char *argv[]) {
 
         if (result.count("list")) {
             return cmd_list_symbols(nosort);
+        }
+
+        if (result.count("type")) {
+            std::string type_symbol = result["type"].as<std::string>();
+            if (!type_symbol.empty()) {
+                return cmd_type(type_symbol, nosort);
+            }
         }
 
         std::string search_pattern = result["search"].as<std::string>();

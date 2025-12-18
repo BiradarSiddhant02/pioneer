@@ -46,7 +46,8 @@ void QueryEngine::find_paths(const std::string &start, const std::string &end,
     }
 
     if (start == "START" && end == "END") {
-        std::cerr << "Error: Cannot use both START and END - at least one must be a specific symbol" << std::endl;
+        std::cerr << "Error: Cannot use both START and END - at least one must be a specific symbol"
+                  << std::endl;
         return;
     }
 
@@ -284,7 +285,7 @@ std::vector<std::string> QueryEngine::data_sinks(const std::string &source) cons
 std::vector<std::string> QueryEngine::variables_in(const std::string &func_pattern) const {
     std::vector<std::string> vars;
     vars.reserve(128);
-    
+
     for (const auto &[symbol, uid] : graph_.get_symbol_map()) {
         if (uid == INVALID_UID)
             continue;
