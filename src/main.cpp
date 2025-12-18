@@ -123,103 +123,122 @@ int cmd_search(const std::vector<std::string> &patterns, const bool nosort) {
     return 0;
 }
 
-int cmd_query(const std::string &start, const std::string &end, bool backtrace, bool pattern_match,
-              const bool nosort) {
+int cmd_query(const std::vector<std::string> &start_chain, const std::vector<std::string> &end_chain,
+              bool backtrace, bool pattern_match, bool nosort) {
     Graph graph;
-    if (!load_graph(graph)) {
-        return 1;
-    }
+    if (!load_graph(graph)) return 1;
 
     QueryEngine engine(graph);
 
-    std::string actual_start = start;
-    std::string actual_end = end;
+    // Handle special cases
+    bool is_backtrace = backtrace || (!start_chain.empty() && start_chain[0] == "START");
+    bool is_forward = !end_chain.empty() && end_chain[0] == "END";
 
-    if (backtrace || start == "START") {
-        actual_start = "START";
-        if (actual_end.empty()) {
+    // Resolve patterns if needed and validate all symbols
+    auto resolve_chain = [&](const std::vector<std::string> &chain, const std::string &label) 
+            -> std::pair<bool, std::vector<std::string>> {
+        std::vector<std::string> resolved;
+        for (const auto &sym : chain) {
+            if (sym == "START" || sym == "END") {
+                resolved.push_back(sym);
+                continue;
+            }
+            std::string actual = sym;
+            if (pattern_match) {
+                auto matches = engine.find_symbols(sym);
+                if (!nosort) std::sort(matches.begin(), matches.end());
+                if (matches.empty()) {
+                    std::cerr << "Error: No symbols matching pattern: " << sym << std::endl;
+                    return {false, {}};
+                }
+                if (matches.size() > 1) {
+                    std::cout << "Pattern '" << sym << "' matches:" << std::endl;
+                    for (size_t i = 0; i < std::min(matches.size(), size_t(5)); ++i)
+                        std::cout << "  [" << (i+1) << "] " << matches[i] << std::endl;
+                    std::cout << "Using: " << matches[0] << std::endl;
+                }
+                actual = matches[0];
+            }
+            if (!validate_symbol(engine, actual, label, nosort)) return {false, {}};
+            resolved.push_back(actual);
+        }
+        return {true, resolved};
+    };
+
+    std::vector<std::string> start_resolved, end_resolved;
+
+    if (is_backtrace) {
+        start_resolved = {"START"};
+        auto [ok, res] = resolve_chain(end_chain, "End chain");
+        if (!ok) return 1;
+        end_resolved = res;
+        if (end_resolved.empty()) {
             std::cerr << "Error: --end symbol required for backtrace" << std::endl;
             return 1;
         }
-    }
-
-    if (actual_end == "END" && actual_start != "START") {
-    }
-    if (pattern_match && actual_start != "START") {
-        auto matches = engine.find_symbols(actual_start);
-
-        if (!nosort) {
-            std::sort(matches.begin(), matches.end());
-        }
-
-        if (matches.empty()) {
-            std::cerr << "Error: No symbols matching pattern: " << actual_start << std::endl;
+    } else if (is_forward) {
+        auto [ok, res] = resolve_chain(start_chain, "Start chain");
+        if (!ok) return 1;
+        start_resolved = res;
+        end_resolved = {"END"};
+        if (start_resolved.empty()) {
+            std::cerr << "Error: --start symbol required for forward trace" << std::endl;
             return 1;
         }
-        if (matches.size() > 1) {
-            std::cout << "Start pattern '" << actual_start
-                      << "' matches multiple symbols:" << std::endl;
-            for (size_t i = 0; i < matches.size(); ++i) {
-                std::cout << "  [" << (i + 1) << "] " << matches[i] << std::endl;
-            }
-            std::cout << "Using first match: " << matches[0] << std::endl;
-        }
-        actual_start = matches[0];
-    }
-
-    if (pattern_match && actual_end != "END") {
-        auto matches = engine.find_symbols(actual_end);
-
-        if (!nosort) {
-            std::sort(matches.begin(), matches.end());
-        }
-
-        if (matches.empty()) {
-            std::cerr << "Error: No symbols matching pattern: " << actual_end << std::endl;
-            return 1;
-        }
-        if (matches.size() > 1) {
-            std::cout << "End pattern '" << actual_end
-                      << "' matches multiple symbols:" << std::endl;
-            for (size_t i = 0; i < matches.size(); ++i) {
-                std::cout << "  [" << (i + 1) << "] " << matches[i] << std::endl;
-            }
-            std::cout << "Using first match: " << matches[0] << std::endl;
-        }
-        actual_end = matches[0];
-    }
-
-    if (actual_start != "START" && !validate_symbol(engine, actual_start, "Start symbol", nosort)) {
-        return 1;
-    }
-
-    if (actual_end != "END" && !validate_symbol(engine, actual_end, "End symbol", nosort)) {
-        return 1;
-    }
-
-    std::cout << "Finding paths";
-    if (actual_start == "START") {
-        std::cout << " (backtrace to " << actual_end << ")";
-    } else if (actual_end == "END") {
-        std::cout << " (forward from " << actual_start << ")";
     } else {
-        std::cout << " from " << actual_start << " to " << actual_end;
+        auto [ok1, res1] = resolve_chain(start_chain, "Start chain");
+        if (!ok1) return 1;
+        start_resolved = res1;
+        auto [ok2, res2] = resolve_chain(end_chain, "End chain");
+        if (!ok2) return 1;
+        end_resolved = res2;
     }
+
+    // Build description
+    auto chain_str = [](const std::vector<std::string> &c) {
+        std::string s;
+        for (size_t i = 0; i < c.size(); ++i) {
+            if (i > 0) s += " -> ";
+            s += c[i];
+        }
+        return s;
+    };
+
+    std::cout << "Finding paths: " << chain_str(start_resolved);
+    if (!end_resolved.empty()) std::cout << " -> ... -> " << chain_str(end_resolved);
     std::cout << ":\n" << std::endl;
 
+    // Determine query endpoints
+    // Find paths from last of start_chain to first of end_chain
+    std::string query_start = start_resolved.empty() ? "START" : start_resolved.back();
+    std::string query_end = end_resolved.empty() ? "END" : end_resolved.front();
+
     size_t path_count = 0;
-    engine.find_paths(actual_start, actual_end, [&](const std::vector<std::string> &path) {
+    engine.find_paths(query_start, query_end, [&](const std::vector<std::string> &middle_path) {
         path_count++;
         std::cout << "[" << path_count << "] ";
-        QueryEngine::print_path(path);
+
+        // Build full path: start_chain (except last) + middle_path + end_chain (except first)
+        std::vector<std::string> full_path;
+        
+        // Add start_chain prefix (all but last, since middle_path starts with it)
+        for (size_t i = 0; i + 1 < start_resolved.size(); ++i)
+            full_path.push_back(start_resolved[i]);
+        
+        // Add middle path
+        for (const auto &sym : middle_path)
+            full_path.push_back(sym);
+        
+        // Add end_chain suffix (all but first, since middle_path ends with it)
+        for (size_t i = 1; i < end_resolved.size(); ++i)
+            full_path.push_back(end_resolved[i]);
+
+        QueryEngine::print_path(full_path);
         return true;
     });
 
-    if (path_count == 0) {
-        std::cout << "No paths found." << std::endl;
-    } else {
-        std::cout << "\nTotal paths found: " << path_count << std::endl;
-    }
+    if (path_count == 0) std::cout << "No paths found." << std::endl;
+    else std::cout << "\nTotal paths found: " << path_count << std::endl;
 
     return 0;
 }
@@ -420,11 +439,12 @@ int main(int argc, char *argv[]) {
     opts("index", "Build call graph index for current directory");
     opts("j,jobs", "Number of threads for indexing (0 = auto)",
          cxxopts::value<unsigned int>()->default_value("0"));
-    opts("s,start", "Start symbol (use START for backtrace)",
-         cxxopts::value<std::string>()->default_value(""));
-    opts("e,end", "End symbol (use END to find all paths)",
-         cxxopts::value<std::string>()->default_value(""));
+    opts("s,start", "Start symbol chain (comma-separated or repeat -s)",
+         cxxopts::value<std::vector<std::string>>());
+    opts("e,end", "End symbol chain (comma-separated, use END for forward trace)",
+         cxxopts::value<std::vector<std::string>>());
     opts("b,backtrace", "Enable backtrace mode (find all callers)");
+
     opts("l,list", "List all indexed symbols");
     opts("data-sources", "Find what a variable is assigned from",
          cxxopts::value<std::string>()->default_value(""));
@@ -504,9 +524,11 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        auto search_patterns = result["search"].as<std::vector<std::string>>();
-        if (!search_patterns.empty()) {
-            return cmd_search(search_patterns, nosort);
+        if (result.count("search")) {
+            auto search_patterns = result["search"].as<std::vector<std::string>>();
+            if (!search_patterns.empty()) {
+                return cmd_search(search_patterns, nosort);
+            }
         }
 
         std::string data_sources_var = result["data-sources"].as<std::string>();
@@ -529,13 +551,14 @@ int main(int argc, char *argv[]) {
             return cmd_find_member(member_pattern, nosort);
         }
 
-        std::string start = result["start"].as<std::string>();
-        std::string end = result["end"].as<std::string>();
+        std::vector<std::string> start_chain, end_chain;
+        if (result.count("start")) start_chain = result["start"].as<std::vector<std::string>>();
+        if (result.count("end")) end_chain = result["end"].as<std::vector<std::string>>();
         bool backtrace = result.count("backtrace") > 0;
         bool pattern_match = result.count("pattern") > 0;
 
-        if (!start.empty() || !end.empty() || backtrace) {
-            return cmd_query(start, end, backtrace, pattern_match, nosort);
+        if (!start_chain.empty() || !end_chain.empty() || backtrace) {
+            return cmd_query(start_chain, end_chain, backtrace, pattern_match, nosort);
         }
 
         print_banner();
