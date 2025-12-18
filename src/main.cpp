@@ -1,5 +1,6 @@
 #include <cxxopts.hpp>
 #include <iostream>
+#include <set>
 #include <string>
 
 #include "pioneer/graph.hpp"
@@ -293,123 +294,113 @@ int cmd_type(const std::string &symbol, const bool nosort) {
     return 0;
 }
 
-int cmd_data_sources(const std::string &variable, const bool nosort) {
+int cmd_data_sources(const std::vector<std::string> &patterns, bool nosort) {
     Graph graph;
-    if (!load_graph(graph)) {
-        return 1;
-    }
+    if (!load_graph(graph)) return 1;
 
     QueryEngine engine(graph);
+    auto matches = engine.find_symbols(patterns);
 
-    if (!validate_symbol(engine, variable, "Variable", nosort)) {
-        return 1;
+    if (!nosort) std::sort(matches.begin(), matches.end());
+
+    std::set<std::string> all_sources;
+    for (const auto &var : matches) {
+        for (const auto &src : engine.data_sources(var))
+            all_sources.insert(src);
     }
 
-    auto sources = engine.data_sources(variable);
-
-    if (!nosort) {
-        std::sort(sources.begin(), sources.end());
-    }
-
-    std::cout << "Data sources for " << variable << ":" << std::endl;
-    if (sources.empty()) {
+    std::cout << "Data sources (" << all_sources.size() << "):" << std::endl;
+    if (all_sources.empty()) {
         std::cout << "  (no sources found)" << std::endl;
     } else {
-        for (const auto &src : sources) {
+        for (const auto &src : all_sources)
             std::cout << "  <- " << src << std::endl;
-        }
     }
-
     return 0;
 }
 
-int cmd_data_sinks(const std::string &source, const bool nosort) {
+int cmd_data_sinks(const std::vector<std::string> &patterns, bool nosort) {
     Graph graph;
-    if (!load_graph(graph)) {
-        return 1;
-    }
+    if (!load_graph(graph)) return 1;
 
     QueryEngine engine(graph);
+    auto matches = engine.find_symbols(patterns);
 
-    if (!validate_symbol(engine, source, "Symbol", nosort)) {
-        return 1;
+    if (!nosort) std::sort(matches.begin(), matches.end());
+
+    std::set<std::string> all_sinks;
+    for (const auto &src : matches) {
+        for (const auto &sink : engine.data_sinks(src))
+            all_sinks.insert(sink);
     }
 
-    auto sinks = engine.data_sinks(source);
-
-    if (!nosort) {
-        std::sort(sinks.begin(), sinks.end());
-    }
-
-    std::cout << "Data flows from " << source << " to:" << std::endl;
-    if (sinks.empty()) {
+    std::cout << "Data sinks (" << all_sinks.size() << "):" << std::endl;
+    if (all_sinks.empty()) {
         std::cout << "  (no sinks found)" << std::endl;
     } else {
-        for (const auto &sink : sinks) {
+        for (const auto &sink : all_sinks)
             std::cout << "  -> " << sink << std::endl;
-        }
     }
-
     return 0;
 }
 
-int cmd_list_variables(const std::string &func_pattern, const bool nosort) {
+int cmd_list_variables(const std::vector<std::string> &patterns, bool nosort) {
     Graph graph;
-    if (!load_graph(graph)) {
-        return 1;
-    }
+    if (!load_graph(graph)) return 1;
 
     QueryEngine engine(graph);
-    auto vars = engine.variables_in(func_pattern);
-
-    if (!nosort) {
-        std::sort(vars.begin(), vars.end());
+    
+    // Get variables matching first pattern, then narrow down
+    auto vars = engine.variables_in(patterns[0]);
+    for (size_t i = 1; i < patterns.size() && !vars.empty(); ++i) {
+        std::vector<std::string> filtered;
+        for (const auto &v : vars)
+            if (v.find(patterns[i]) != std::string::npos)
+                filtered.push_back(v);
+        vars = std::move(filtered);
     }
 
-    std::cout << "Variables matching '" << func_pattern << "':" << std::endl;
+    if (!nosort) std::sort(vars.begin(), vars.end());
+
+    std::cout << "Variables (" << vars.size() << "):" << std::endl;
     if (vars.empty()) {
         std::cout << "  (none found)" << std::endl;
     } else {
-        for (const auto &var : vars) {
+        for (const auto &var : vars)
             std::cout << "  " << var << std::endl;
-        }
     }
-
     return 0;
 }
 
-int cmd_find_member(const std::string &member_pattern, const bool nosort) {
+int cmd_find_member(const std::vector<std::string> &patterns, bool nosort) {
     Graph graph;
-    if (!load_graph(graph)) {
-        return 1;
-    }
+    if (!load_graph(graph)) return 1;
 
     QueryEngine engine(graph);
-
     std::vector<std::string> matches;
-    matches.reserve(256);
 
+    // First pattern: search in variables
     for (const auto &[symbol, uid] : graph.get_symbol_map()) {
-        if (uid == INVALID_UID)
-            continue;
-        if (!graph.is_variable(uid))
-            continue;
-
-        size_t last_sep = symbol.rfind("::");
-        std::string var_part =
-            (last_sep != std::string::npos) ? symbol.substr(last_sep + 2) : symbol;
-
-        if (var_part.find(member_pattern) != std::string::npos ||
-            symbol.find(member_pattern) != std::string::npos) {
+        if (uid == INVALID_UID || !graph.is_variable(uid)) continue;
+        size_t sep = symbol.rfind("::");
+        std::string var_part = (sep != std::string::npos) ? symbol.substr(sep + 2) : symbol;
+        if (var_part.find(patterns[0]) != std::string::npos ||
+            symbol.find(patterns[0]) != std::string::npos)
             matches.push_back(symbol);
-        }
     }
 
-    if (!nosort) {
-        std::sort(matches.begin(), matches.end());
+    // Narrow down with subsequent patterns
+    for (size_t i = 1; i < patterns.size() && !matches.empty(); ++i) {
+        std::vector<std::string> filtered;
+        for (const auto &sym : matches)
+            if (sym.find(patterns[i]) != std::string::npos)
+                filtered.push_back(sym);
+        matches = std::move(filtered);
     }
 
-    std::cout << "Assignments to '" << member_pattern << "':" << std::endl;
+    if (!nosort) std::sort(matches.begin(), matches.end());
+
+    std::cout << "Assignments (" << matches.size() << "):" << std::endl;
     if (matches.empty()) {
         std::cout << "  (none found)" << std::endl;
     } else {
@@ -418,14 +409,12 @@ int cmd_find_member(const std::string &member_pattern, const bool nosort) {
             std::cout << "  " << var;
             if (!sources.empty()) {
                 std::cout << " <- " << sources[0];
-                for (size_t i = 1; i < sources.size(); ++i) {
+                for (size_t i = 1; i < sources.size(); ++i)
                     std::cout << ", " << sources[i];
-                }
             }
             std::cout << std::endl;
         }
     }
-
     return 0;
 }
 
@@ -439,24 +428,24 @@ int main(int argc, char *argv[]) {
     opts("index", "Build call graph index for current directory");
     opts("j,jobs", "Number of threads for indexing (0 = auto)",
          cxxopts::value<unsigned int>()->default_value("0"));
-    opts("s,start", "Start symbol chain (comma-separated or repeat -s)",
+    opts("s,start", "Start symbol chain (comma-separated, no spaces)",
          cxxopts::value<std::vector<std::string>>());
-    opts("e,end", "End symbol chain (comma-separated, use END for forward trace)",
+    opts("e,end", "End symbol chain (comma-separated, no spaces)",
          cxxopts::value<std::vector<std::string>>());
     opts("b,backtrace", "Enable backtrace mode (find all callers)");
 
     opts("l,list", "List all indexed symbols");
-    opts("data-sources", "Find what a variable is assigned from",
-         cxxopts::value<std::string>()->default_value(""));
-    opts("data-sinks", "Find what variables a function/symbol flows to",
-         cxxopts::value<std::string>()->default_value(""));
-    opts("vars", "List variables in a function (pattern match)",
-         cxxopts::value<std::string>()->default_value(""));
-    opts("member", "Find all assignments to a struct member pattern",
-         cxxopts::value<std::string>()->default_value(""));
-    opts("search", "Search for symbols matching a pattern",
+    opts("data-sources", "Find data sources (comma-separated, no spaces)",
          cxxopts::value<std::vector<std::string>>());
-    opts("p,pattern", "Enable pattern matching for --start and --end (substring match)");
+    opts("data-sinks", "Find data sinks (comma-separated, no spaces)",
+         cxxopts::value<std::vector<std::string>>());
+    opts("vars", "List variables (comma-separated, no spaces)",
+         cxxopts::value<std::vector<std::string>>());
+    opts("member", "Find member assignments (comma-separated, no spaces)",
+         cxxopts::value<std::vector<std::string>>());
+    opts("search", "Search symbols (comma-separated, no spaces)",
+         cxxopts::value<std::vector<std::string>>());
+    opts("p,pattern", "Enable pattern matching for --start and --end");
     opts("nosort", "Do not sort the list of symbols");
     opts("type", "Prints type of symbol (function/variable)",
          cxxopts::value<std::string>()->default_value(""));
@@ -525,30 +514,28 @@ int main(int argc, char *argv[]) {
         }
 
         if (result.count("search")) {
-            auto search_patterns = result["search"].as<std::vector<std::string>>();
-            if (!search_patterns.empty()) {
-                return cmd_search(search_patterns, nosort);
-            }
+            auto patterns = result["search"].as<std::vector<std::string>>();
+            if (!patterns.empty()) return cmd_search(patterns, nosort);
         }
 
-        std::string data_sources_var = result["data-sources"].as<std::string>();
-        if (!data_sources_var.empty()) {
-            return cmd_data_sources(data_sources_var, nosort);
+        if (result.count("data-sources")) {
+            auto patterns = result["data-sources"].as<std::vector<std::string>>();
+            if (!patterns.empty()) return cmd_data_sources(patterns, nosort);
         }
 
-        std::string data_sinks_src = result["data-sinks"].as<std::string>();
-        if (!data_sinks_src.empty()) {
-            return cmd_data_sinks(data_sinks_src, nosort);
+        if (result.count("data-sinks")) {
+            auto patterns = result["data-sinks"].as<std::vector<std::string>>();
+            if (!patterns.empty()) return cmd_data_sinks(patterns, nosort);
         }
 
-        std::string vars_pattern = result["vars"].as<std::string>();
-        if (!vars_pattern.empty()) {
-            return cmd_list_variables(vars_pattern, nosort);
+        if (result.count("vars")) {
+            auto patterns = result["vars"].as<std::vector<std::string>>();
+            if (!patterns.empty()) return cmd_list_variables(patterns, nosort);
         }
 
-        std::string member_pattern = result["member"].as<std::string>();
-        if (!member_pattern.empty()) {
-            return cmd_find_member(member_pattern, nosort);
+        if (result.count("member")) {
+            auto patterns = result["member"].as<std::vector<std::string>>();
+            if (!patterns.empty()) return cmd_find_member(patterns, nosort);
         }
 
         std::vector<std::string> start_chain, end_chain;
