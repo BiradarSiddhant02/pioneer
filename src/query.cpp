@@ -10,9 +10,22 @@ QueryEngine::QueryEngine(const Graph &graph) : graph_(graph) {}
 
 bool QueryEngine::has_symbol(const std::string &name) const { return graph_.has_symbol(name); }
 
+std::vector<std::string> QueryEngine::find_symbols(const std::vector<std::string> &patterns) const {
+    std::vector<std::string> matches;
+
+    for (const auto &[symbol, uid] : graph_.get_symbol_map()) {
+        for (const auto &pattern : patterns) {
+            if (symbol.find(pattern) != std::string::npos) {
+                matches.push_back(symbol);
+            }
+        }
+    }
+
+    return matches;
+}
+
 std::vector<std::string> QueryEngine::find_symbols(const std::string &pattern) const {
     std::vector<std::string> matches;
-    matches.reserve(static_cast<size_t>(graph_.end_uid()));
 
     for (const auto &[symbol, uid] : graph_.get_symbol_map()) {
         if (symbol.find(pattern) != std::string::npos) {

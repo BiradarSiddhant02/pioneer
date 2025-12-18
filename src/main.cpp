@@ -59,27 +59,29 @@ bool load_graph(Graph &graph) {
     }
 }
 
-// Helper function to validate symbol exists, with suggestions if not found
 bool validate_symbol(const QueryEngine &engine, const std::string &symbol,
-                     const std::string &symbol_type_name, const bool nosort) {
-    if (engine.has_symbol(symbol)) {
-        return true;
-    }
+                     const std::string &label, bool nosort) {
+    if (engine.has_symbol(symbol)) return true;
 
-    std::cerr << "Error: " << symbol_type_name << " not found: " << symbol << std::endl;
+    std::cerr << "Error: " << label << " not found: " << symbol << std::endl;
     auto matches = engine.find_symbols(symbol);
-
-    if (!nosort) {
-        std::sort(matches.begin(), matches.end());
-    }
+    if (!nosort) std::sort(matches.begin(), matches.end());
 
     if (!matches.empty()) {
         std::cerr << "Did you mean one of these?" << std::endl;
-        for (size_t i = 0; i < std::min(matches.size(), size_t(5)); ++i) {
+        for (size_t i = 0; i < std::min(matches.size(), size_t(5)); ++i)
             std::cerr << "  " << matches[i] << std::endl;
-        }
     }
     return false;
+}
+
+bool validate_symbol(const QueryEngine &engine, const std::vector<std::string> &symbols,
+                     const std::string &label, bool nosort) {
+    for (const auto &symbol : symbols) {
+        if (!validate_symbol(engine, symbol, label, nosort))
+            return false;
+    }
+    return true;
 }
 
 // Helper to convert SymbolType enum to string
@@ -96,20 +98,20 @@ const char *symbol_type_to_string(SymbolType type) {
     }
 }
 
-int cmd_search(const std::string &pattern, const bool nosort) {
+int cmd_search(const std::vector<std::string> &patterns, const bool nosort) {
     Graph graph;
     if (!load_graph(graph)) {
         return 1;
     }
 
     QueryEngine engine(graph);
-    auto matches = engine.find_symbols(pattern);
+    auto matches = engine.find_symbols(patterns);
 
     if (!nosort) {
         std::sort(matches.begin(), matches.end());
     }
 
-    std::cout << "Symbols matching '" << pattern << "' (" << matches.size() << "):" << std::endl;
+    std::cout << matches.size() << " Matches found" << std::endl;
     if (matches.empty()) {
         std::cout << "  (none found)" << std::endl;
     } else {
@@ -433,7 +435,7 @@ int main(int argc, char *argv[]) {
     opts("member", "Find all assignments to a struct member pattern",
          cxxopts::value<std::string>()->default_value(""));
     opts("search", "Search for symbols matching a pattern",
-         cxxopts::value<std::string>()->default_value(""));
+         cxxopts::value<std::vector<std::string>>());
     opts("p,pattern", "Enable pattern matching for --start and --end (substring match)");
     opts("nosort", "Do not sort the list of symbols");
     opts("type", "Prints type of symbol (function/variable)",
@@ -502,9 +504,9 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        std::string search_pattern = result["search"].as<std::string>();
-        if (!search_pattern.empty()) {
-            return cmd_search(search_pattern, nosort);
+        auto search_patterns = result["search"].as<std::vector<std::string>>();
+        if (!search_patterns.empty()) {
+            return cmd_search(search_patterns, nosort);
         }
 
         std::string data_sources_var = result["data-sources"].as<std::string>();

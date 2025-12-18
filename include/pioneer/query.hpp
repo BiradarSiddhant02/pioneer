@@ -33,6 +33,7 @@ public:
     bool has_symbol(const std::string &name) const;
 
     // Get all symbols matching a pattern (simple substring match)
+    std::vector<std::string> find_symbols(const std::vector<std::string> &patterns) const;
     std::vector<std::string> find_symbols(const std::string &pattern) const;
 
     // Print path in human-readable format
