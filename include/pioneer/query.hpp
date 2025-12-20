@@ -38,6 +38,8 @@ public:
 
     // Print path in human-readable format
     static void print_path(const std::vector<std::string> &path);
+    static void print_path(const std::vector<std::string> &path, const Graph &graph,
+                           bool show_paths);
 
     // ============ Data Flow Queries (v1.1.0) ============
 

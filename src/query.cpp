@@ -11,11 +11,12 @@ QueryEngine::QueryEngine(const Graph &graph) : graph_(graph) {}
 bool QueryEngine::has_symbol(const std::string &name) const { return graph_.has_symbol(name); }
 
 std::vector<std::string> QueryEngine::find_symbols(const std::vector<std::string> &patterns) const {
-    if (patterns.empty()) return {};
-    
+    if (patterns.empty())
+        return {};
+
     // Start with first pattern
     std::vector<std::string> matches = find_symbols(patterns[0]);
-    
+
     // Narrow down with each subsequent pattern
     for (size_t i = 1; i < patterns.size() && !matches.empty(); ++i) {
         std::vector<std::string> filtered;
@@ -26,7 +27,7 @@ std::vector<std::string> QueryEngine::find_symbols(const std::vector<std::string
         }
         matches = std::move(filtered);
     }
-    
+
     return matches;
 }
 
@@ -50,6 +51,39 @@ void QueryEngine::print_path(const std::vector<std::string> &path) {
         }
     }
     std::cout << std::endl;
+}
+
+void QueryEngine::print_path(const std::vector<std::string> &path, const Graph &graph,
+                             bool show_paths) {
+    if (!show_paths) {
+        print_path(path); // Use the simple version
+        return;
+    }
+
+    // Print each symbol on its own line with file path
+    for (size_t i = 0; i < path.size(); ++i) {
+        std::cout << "  ";
+        if (i < path.size() - 1) {
+            std::cout << "└─> ";
+        } else {
+            std::cout << "    ";
+        }
+
+        std::cout << path[i];
+
+        // Get file path for this symbol
+        SymbolUID uid = graph.get_uid(path[i]);
+        if (uid != INVALID_UID) {
+            SymbolUID file_uid = graph.get_symbol_file_uid(uid);
+            if (file_uid != INVALID_UID) {
+                std::string filepath = graph.get_file_path(file_uid);
+                if (!filepath.empty()) {
+                    std::cout << " [" << filepath << "]";
+                }
+            }
+        }
+        std::cout << std::endl;
+    }
 }
 
 void QueryEngine::find_paths(const std::string &start, const std::string &end,

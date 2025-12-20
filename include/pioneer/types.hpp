@@ -1,6 +1,8 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
+#include <map>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -80,6 +82,11 @@ struct VariableAssignment {
     bool is_function_call;       // True if assigned from function return value
 };
 
+struct PathNode {
+    std::map<std::string, PathNode> subdirs;
+    std::vector<SymbolUID> file_uids; // File UIDs instead of filenames
+};
+
 // Call graph representation using UIDs
 struct CallGraph {
     // Symbol name -> UID mapping
@@ -90,6 +97,14 @@ struct CallGraph {
 
     // Symbol type mapping
     std::unordered_map<SymbolUID, SymbolType> symbol_types;
+
+    // File tracking with UIDs
+    std::unordered_map<std::string, SymbolUID> filepath_to_uid;  // filepath -> file UID
+    std::unordered_map<SymbolUID, std::string> file_uid_to_path; // file UID -> filepath
+    std::unordered_map<SymbolUID, std::vector<SymbolUID>>
+        file_to_symbols;                                     // file UID -> [symbol UIDs]
+    std::unordered_map<SymbolUID, SymbolUID> symbol_to_file; // symbol UID -> file UID
+    SymbolUID next_file_uid = 1;                             // Separate counter for file UIDs
 
     // Call graph: caller UID -> set of callee UIDs
     std::unordered_map<SymbolUID, std::unordered_set<SymbolUID>> call_map;
@@ -205,5 +220,47 @@ struct CallGraph {
         return count;
     }
 };
+
+// Helper functions for PathNode trie
+inline void add_to_path_trie(PathNode &root, const std::string &filepath, SymbolUID file_uid) {
+    if (filepath.empty())
+        return;
+
+    PathNode *current = &root;
+    std::string remaining = filepath;
+    size_t pos = 0;
+
+    // Split path by '/' or '\\'
+    while (pos < remaining.size()) {
+        size_t next_slash = remaining.find_first_of("/\\", pos);
+        if (next_slash == std::string::npos) {
+            // Last component (filename) - store the file UID
+            if (!filepath.empty()) {
+                // Check if file UID already exists
+                auto it = std::find(current->file_uids.begin(), current->file_uids.end(), file_uid);
+                if (it == current->file_uids.end()) {
+                    current->file_uids.push_back(file_uid);
+                }
+            }
+            break;
+        } else {
+            // Directory component
+            std::string dir = remaining.substr(pos, next_slash - pos);
+            if (!dir.empty() && dir != ".") {
+                current = &(current->subdirs[dir]);
+            }
+            pos = next_slash + 1;
+        }
+    }
+}
+
+inline PathNode
+build_path_trie(const std::unordered_map<SymbolUID, std::string> &file_uid_to_path) {
+    PathNode root;
+    for (const auto &[file_uid, filepath] : file_uid_to_path) {
+        add_to_path_trie(root, filepath, file_uid);
+    }
+    return root;
+}
 
 } // namespace pioneer

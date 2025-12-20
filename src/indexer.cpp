@@ -307,6 +307,8 @@ Graph Indexer::index() {
         name_to_functions[func.qualified_name].push_back(&func);
     }
 
+    // Phase 4: Build path Trie
+
     // Build final name map (original base name -> final name with signature if overloaded)
     // Key: "base_name|file_path" for overloaded, just "base_name" for unique
     std::unordered_map<std::string, std::string> original_to_final;
@@ -316,14 +318,14 @@ Graph Indexer::index() {
         if (funcs.size() == 1) {
             // No overload
             original_to_final[base_name] = base_name;
-            graph.add_symbol(base_name);
+            graph.add_symbol(base_name, funcs[0]->file_path);
         } else {
             // Overloaded - add signatures
             for (auto *func : funcs) {
                 std::string sig = build_param_signature(func->param_types);
                 std::string final_name = base_name + sig;
                 original_to_final[base_name + "|" + func->file_path] = final_name;
-                graph.add_symbol(final_name);
+                graph.add_symbol(final_name, func->file_path);
             }
         }
     }
@@ -417,9 +419,22 @@ Graph Indexer::index() {
     // Phase 5: Process variables for data flow (v1.1.0)
     std::cout << "Building data flow graph..." << std::endl;
 
+    // Build map of function qualified names to file paths
+    std::unordered_map<std::string, std::string> func_to_file;
+    for (const auto &func : all_functions) {
+        func_to_file[func.qualified_name] = func.file_path;
+    }
+
     for (const auto &var : all_variables) {
-        // Add variable as a symbol
-        graph.add_symbol(var.qualified_name, SymbolType::Variable);
+        // Determine file path from containing function
+        std::string var_file = "";
+        auto file_it = func_to_file.find(var.containing_func);
+        if (file_it != func_to_file.end()) {
+            var_file = file_it->second;
+        }
+
+        // Add variable as a symbol with file path
+        graph.add_symbol(var.qualified_name, var_file, SymbolType::Variable);
 
         // Track data flow from value source to variable
         if (!var.value_source.empty()) {
@@ -447,8 +462,10 @@ Graph Indexer::index() {
 
             // Add the source as a symbol if it doesn't exist
             if (!graph.has_symbol(source)) {
-                graph.add_symbol(source, var.from_function_call ? SymbolType::Function
-                                                                : SymbolType::Variable);
+                // Use same file as variable for source (best guess)
+                graph.add_symbol(source, var_file,
+                                 var.from_function_call ? SymbolType::Function
+                                                        : SymbolType::Variable);
             }
 
             // Add data flow: source -> variable

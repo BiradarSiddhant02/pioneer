@@ -134,6 +134,7 @@ target_compile_options(tree_sitter_cpp_lib PRIVATE -w)
 # Pioneer executable
 add_executable(pioneer
     src/main.cpp
+    src/commands.cpp
     src/indexer.cpp
     src/parser.cpp
     src/query.cpp
