@@ -2,7 +2,7 @@
 
 **Version 2.0.0**
 
-A high-performance CLI tool that uses tree-sitter to index codebases (Python, C, C++) and build call graphs with advanced querying capabilities.
+A CLI tool that uses tree-sitter to index codebases (Python, C, C++) and build call graphs with advanced querying capabilities.
 
 ## Building
 
@@ -225,3 +225,4 @@ src/
 ## License
 
 Apache 2.0
+
