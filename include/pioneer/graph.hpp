@@ -1,3 +1,17 @@
+// Copyright 2025 Siddhant Biradar
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #pragma once
 
 #include "types.hpp"
@@ -11,11 +25,11 @@ using json = nlohmann::json;
 
 class Graph {
 public:
-
     CallGraph call_graph;
 
     // Add a symbol definition
-    SymbolUID add_symbol(const std::string &qualified_name, SymbolType type = SymbolType::Function);
+    SymbolUID add_symbol(const std::string &qualified_name,
+                         SymbolType type = SymbolType::Function);
 
     // Add a symbol with file path
     SymbolUID add_symbol(const std::string &qualified_name, const std::string &filepath,
@@ -31,7 +45,7 @@ public:
     SymbolUID get_symbol_file_uid(SymbolUID symbol_uid) const;
 
     // Get all symbols in a file
-    const std::vector<SymbolUID> &get_file_symbols(SymbolUID file_uid) const;
+    const std::vector<SymbolUID>& get_file_symbols(SymbolUID file_uid) const;
 
     // Add a call relationship
     void add_call(const std::string &caller, const std::string &callee);

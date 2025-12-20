@@ -1,3 +1,17 @@
+// Copyright 2025 Siddhant Biradar
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #include "pioneer/indexer.hpp"
 #include <algorithm>
 #include <fstream>
@@ -309,6 +323,7 @@ Graph Indexer::index() {
 
     // Phase 4: Build path Trie
 
+
     // Build final name map (original base name -> final name with signature if overloaded)
     // Key: "base_name|file_path" for overloaded, just "base_name" for unique
     std::unordered_map<std::string, std::string> original_to_final;
@@ -463,9 +478,8 @@ Graph Indexer::index() {
             // Add the source as a symbol if it doesn't exist
             if (!graph.has_symbol(source)) {
                 // Use same file as variable for source (best guess)
-                graph.add_symbol(source, var_file,
-                                 var.from_function_call ? SymbolType::Function
-                                                        : SymbolType::Variable);
+                graph.add_symbol(source, var_file, var.from_function_call ? SymbolType::Function
+                                                                : SymbolType::Variable);
             }
 
             // Add data flow: source -> variable

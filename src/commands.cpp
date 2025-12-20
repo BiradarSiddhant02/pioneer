@@ -1,3 +1,17 @@
+// Copyright 2025 Siddhant Biradar
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #include "pioneer/commands.hpp"
 #include "pioneer/indexer.hpp"
 #include "pioneer/query.hpp"
@@ -88,8 +102,7 @@ int cmd_index(unsigned int num_threads) {
     return 0;
 }
 
-int cmd_search(const std::vector<std::string> &patterns, const bool nosort, const bool show_path,
-               const Graph &graph) {
+int cmd_search(const std::vector<std::string> &patterns, const bool nosort, const bool show_path, const Graph &graph) {
     QueryEngine engine(graph);
     auto matches = engine.find_symbols(patterns);
 
@@ -454,13 +467,13 @@ static void grep_worker(const std::vector<std::string> &files, size_t start_idx,
                         std::vector<GrepMatch> &results, std::mutex &results_mutex) {
     std::vector<GrepMatch> local_results;
     local_results.reserve(100);
-
+    
     std::regex regex_pattern;
     std::regex::flag_type flags = std::regex::ECMAScript;
     if (ignore_case) {
         flags |= std::regex::icase;
     }
-
+    
     if (use_regex) {
         try {
             regex_pattern = std::regex(pattern, flags);
@@ -468,39 +481,36 @@ static void grep_worker(const std::vector<std::string> &files, size_t start_idx,
             return; // Invalid regex, skip this worker
         }
     }
-
+    
     for (size_t i = start_idx; i < end_idx && i < files.size(); ++i) {
         std::ifstream file(files[i]);
-        if (!file.is_open())
-            continue;
-
+        if (!file.is_open()) continue;
+        
         std::string line;
         size_t line_num = 0;
         while (std::getline(file, line)) {
             ++line_num;
             bool match = false;
-
+            
             if (use_regex) {
                 match = std::regex_search(line, regex_pattern);
             } else {
                 if (ignore_case) {
                     std::string line_lower = line;
                     std::string pattern_lower = pattern;
-                    std::transform(line_lower.begin(), line_lower.end(), line_lower.begin(),
-                                   ::tolower);
-                    std::transform(pattern_lower.begin(), pattern_lower.end(),
-                                   pattern_lower.begin(), ::tolower);
+                    std::transform(line_lower.begin(), line_lower.end(), line_lower.begin(), ::tolower);
+                    std::transform(pattern_lower.begin(), pattern_lower.end(), pattern_lower.begin(), ::tolower);
                     match = line_lower.find(pattern_lower) != std::string::npos;
                 } else {
                     match = line.find(pattern) != std::string::npos;
                 }
             }
-
+            
             if (match) {
                 local_results.push_back({files[i], line_num, line});
             }
         }
-
+        
         // Periodically flush to global results to avoid memory buildup
         if (local_results.size() > 1000) {
             std::lock_guard<std::mutex> lock(results_mutex);
@@ -508,7 +518,7 @@ static void grep_worker(const std::vector<std::string> &files, size_t start_idx,
             local_results.clear();
         }
     }
-
+    
     // Final flush
     if (!local_results.empty()) {
         std::lock_guard<std::mutex> lock(results_mutex);
@@ -516,70 +526,68 @@ static void grep_worker(const std::vector<std::string> &files, size_t start_idx,
     }
 }
 
-int cmd_grep(const std::string &pattern, unsigned int num_threads, bool use_regex,
-             bool ignore_case) {
+int cmd_grep(const std::string &pattern, unsigned int num_threads, bool use_regex, bool ignore_case) {
     Graph graph;
     if (!load_graph(graph)) {
         return 1;
     }
-
+    
     // Collect all unique file paths from the graph
     std::set<std::string> unique_files;
     for (const auto &[file_uid, filepath] : graph.call_graph.file_uid_to_path) {
         unique_files.insert(filepath);
     }
-
+    
     std::vector<std::string> files(unique_files.begin(), unique_files.end());
-
+    
     if (files.empty()) {
         std::cout << "No files found in index." << std::endl;
         return 0;
     }
-
+    
     std::cout << "Searching " << files.size() << " files for pattern: " << pattern << std::endl;
-
+    
     // Auto-detect thread count if not specified
     if (num_threads == 0) {
         num_threads = std::thread::hardware_concurrency();
-        if (num_threads == 0)
-            num_threads = 4;
+        if (num_threads == 0) num_threads = 4;
     }
-
+    
     std::vector<GrepMatch> results;
     std::mutex results_mutex;
-
+    
     // Create worker threads
     std::vector<std::thread> threads;
     size_t files_per_thread = (files.size() + num_threads - 1) / num_threads;
-
+    
     for (unsigned int t = 0; t < num_threads; ++t) {
         size_t start_idx = t * files_per_thread;
         size_t end_idx = std::min(start_idx + files_per_thread, files.size());
-
-        if (start_idx >= files.size())
-            break;
-
-        threads.emplace_back(grep_worker, std::cref(files), start_idx, end_idx, std::cref(pattern),
-                             use_regex, ignore_case, std::ref(results), std::ref(results_mutex));
+        
+        if (start_idx >= files.size()) break;
+        
+        threads.emplace_back(grep_worker, std::cref(files), start_idx, end_idx,
+                           std::cref(pattern), use_regex, ignore_case,
+                           std::ref(results), std::ref(results_mutex));
     }
-
+    
     // Wait for all threads
     for (auto &t : threads) {
         t.join();
     }
-
+    
     // Display results
     std::cout << "\nFound " << results.size() << " matches:" << std::endl;
-
+    
     if (results.empty()) {
         std::cout << "  (none found)" << std::endl;
     } else {
         for (const auto &match : results) {
-            std::cout << match.filepath << ":" << match.line_number << ": " << match.line_content
-                      << std::endl;
+            std::cout << match.filepath << ":" << match.line_number << ": " 
+                     << match.line_content << std::endl;
         }
     }
-
+    
     return 0;
 }
 

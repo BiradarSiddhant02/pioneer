@@ -1,3 +1,17 @@
+// Copyright 2025 Siddhant Biradar
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #include "pioneer/graph.hpp"
 #include <fstream>
 #include <stdexcept>
@@ -7,7 +21,7 @@ namespace pioneer {
 // Helper function to serialize PathNode trie to JSON
 static json path_node_to_json(const PathNode &node) {
     json j = json::object();
-
+    
     // Serialize subdirectories
     if (!node.subdirs.empty()) {
         json subdirs = json::object();
@@ -16,31 +30,31 @@ static json path_node_to_json(const PathNode &node) {
         }
         j["subdirs"] = subdirs;
     }
-
+    
     // Serialize file UIDs
     if (!node.file_uids.empty()) {
         j["files"] = node.file_uids;
     }
-
+    
     return j;
 }
 
 // Helper function to deserialize PathNode trie from JSON
 static PathNode path_node_from_json(const json &j) {
     PathNode node;
-
+    
     // Deserialize subdirectories
     if (j.contains("subdirs")) {
         for (auto it = j["subdirs"].begin(); it != j["subdirs"].end(); ++it) {
             node.subdirs[it.key()] = path_node_from_json(it.value());
         }
     }
-
+    
     // Deserialize file UIDs
     if (j.contains("files")) {
         node.file_uids = j["files"].get<std::vector<SymbolUID>>();
     }
-
+    
     return node;
 }
 
@@ -56,11 +70,11 @@ SymbolUID Graph::add_symbol(const std::string &qualified_name, const std::string
                             SymbolType type) {
     SymbolUID uid = add_symbol(qualified_name, type);
     SymbolUID file_uid = get_or_create_file_uid(filepath);
-
+    
     // Link symbol to file
     call_graph.symbol_to_file[uid] = file_uid;
     call_graph.file_to_symbols[file_uid].push_back(uid);
-
+    
     return uid;
 }
 
@@ -70,7 +84,7 @@ SymbolUID Graph::get_or_create_file_uid(const std::string &filepath) {
     if (it != call_graph.filepath_to_uid.end()) {
         return it->second;
     }
-
+    
     SymbolUID file_uid = call_graph.next_file_uid++;
     call_graph.filepath_to_uid[filepath] = file_uid;
     call_graph.file_uid_to_path[file_uid] = filepath;
@@ -90,7 +104,7 @@ SymbolUID Graph::get_symbol_file_uid(SymbolUID symbol_uid) const {
 }
 
 // Get all symbols in a file
-const std::vector<SymbolUID> &Graph::get_file_symbols(SymbolUID file_uid) const {
+const std::vector<SymbolUID>& Graph::get_file_symbols(SymbolUID file_uid) const {
     static const std::vector<SymbolUID> empty;
     auto it = call_graph.file_to_symbols.find(file_uid);
     return (it != call_graph.file_to_symbols.end()) ? it->second : empty;
@@ -111,14 +125,16 @@ void Graph::add_data_flow(const std::string &source, const std::string &dest) {
 }
 
 // Finalize graph (add END nodes)
-void Graph::finalize() { call_graph.finalize(); }
+void Graph::finalize() {
+    call_graph.finalize();
+}
 
 // Serialize to JSON
 json Graph::to_json() const {
     json j;
 
     // Metadata
-    j["metadata"]["version"] = "1.2.0"; // Increment version for file tracking
+    j["metadata"]["version"] = "1.2.0";  // Increment version for file tracking
     j["metadata"]["num_symbols"] = call_graph.num_symbols();
     j["metadata"]["num_functions"] = call_graph.num_functions();
     j["metadata"]["num_variables"] = call_graph.num_variables();
@@ -290,10 +306,14 @@ Graph Graph::load(const std::string &filepath) {
 }
 
 // Get UID for symbol (for querying)
-SymbolUID Graph::get_uid(const std::string &name) const { return call_graph.get_uid(name); }
+SymbolUID Graph::get_uid(const std::string &name) const {
+    return call_graph.get_uid(name);
+}
 
 // Get symbol name from UID
-std::string Graph::get_symbol(SymbolUID uid) const { return call_graph.get_symbol(uid); }
+std::string Graph::get_symbol(SymbolUID uid) const {
+    return call_graph.get_symbol(uid);
+}
 
 // Get callees for a caller
 const std::unordered_set<SymbolUID> &Graph::get_callees(SymbolUID caller) const {
@@ -324,7 +344,9 @@ const std::unordered_set<SymbolUID> &Graph::get_data_sinks(SymbolUID source) con
 }
 
 // Check if a symbol is a variable
-bool Graph::is_variable(SymbolUID uid) const { return call_graph.is_variable(uid); }
+bool Graph::is_variable(SymbolUID uid) const {
+    return call_graph.is_variable(uid);
+}
 
 // Check if symbol exists
 bool Graph::has_symbol(const std::string &name) const {
@@ -332,7 +354,9 @@ bool Graph::has_symbol(const std::string &name) const {
 }
 
 // Get END UID
-SymbolUID Graph::end_uid() const { return call_graph.end_uid; }
+SymbolUID Graph::end_uid() const {
+    return call_graph.end_uid;
+}
 
 // Get all symbols
 std::vector<std::string> Graph::get_all_symbols() const {

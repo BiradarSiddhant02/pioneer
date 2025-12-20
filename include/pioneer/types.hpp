@@ -1,9 +1,23 @@
+// Copyright 2025 Siddhant Biradar
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #pragma once
 
 #include <algorithm>
 #include <cstdint>
-#include <map>
 #include <string>
+#include <map>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -84,7 +98,7 @@ struct VariableAssignment {
 
 struct PathNode {
     std::map<std::string, PathNode> subdirs;
-    std::vector<SymbolUID> file_uids; // File UIDs instead of filenames
+    std::vector<SymbolUID> file_uids;  // File UIDs instead of filenames
 };
 
 // Call graph representation using UIDs
@@ -100,11 +114,10 @@ struct CallGraph {
 
     // File tracking with UIDs
     std::unordered_map<std::string, SymbolUID> filepath_to_uid;  // filepath -> file UID
-    std::unordered_map<SymbolUID, std::string> file_uid_to_path; // file UID -> filepath
-    std::unordered_map<SymbolUID, std::vector<SymbolUID>>
-        file_to_symbols;                                     // file UID -> [symbol UIDs]
-    std::unordered_map<SymbolUID, SymbolUID> symbol_to_file; // symbol UID -> file UID
-    SymbolUID next_file_uid = 1;                             // Separate counter for file UIDs
+    std::unordered_map<SymbolUID, std::string> file_uid_to_path;  // file UID -> filepath
+    std::unordered_map<SymbolUID, std::vector<SymbolUID>> file_to_symbols;  // file UID -> [symbol UIDs]
+    std::unordered_map<SymbolUID, SymbolUID> symbol_to_file;  // symbol UID -> file UID
+    SymbolUID next_file_uid = 1;  // Separate counter for file UIDs
 
     // Call graph: caller UID -> set of callee UIDs
     std::unordered_map<SymbolUID, std::unordered_set<SymbolUID>> call_map;
@@ -223,13 +236,12 @@ struct CallGraph {
 
 // Helper functions for PathNode trie
 inline void add_to_path_trie(PathNode &root, const std::string &filepath, SymbolUID file_uid) {
-    if (filepath.empty())
-        return;
-
+    if (filepath.empty()) return;
+    
     PathNode *current = &root;
     std::string remaining = filepath;
     size_t pos = 0;
-
+    
     // Split path by '/' or '\\'
     while (pos < remaining.size()) {
         size_t next_slash = remaining.find_first_of("/\\", pos);
@@ -254,8 +266,7 @@ inline void add_to_path_trie(PathNode &root, const std::string &filepath, Symbol
     }
 }
 
-inline PathNode
-build_path_trie(const std::unordered_map<SymbolUID, std::string> &file_uid_to_path) {
+inline PathNode build_path_trie(const std::unordered_map<SymbolUID, std::string> &file_uid_to_path) {
     PathNode root;
     for (const auto &[file_uid, filepath] : file_uid_to_path) {
         add_to_path_trie(root, filepath, file_uid);

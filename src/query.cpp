@@ -1,3 +1,17 @@
+// Copyright 2025 Siddhant Biradar
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #include "pioneer/query.hpp"
 #include <algorithm>
 #include <iostream>
@@ -53,10 +67,9 @@ void QueryEngine::print_path(const std::vector<std::string> &path) {
     std::cout << std::endl;
 }
 
-void QueryEngine::print_path(const std::vector<std::string> &path, const Graph &graph,
-                             bool show_paths) {
+void QueryEngine::print_path(const std::vector<std::string> &path, const Graph &graph, bool show_paths) {
     if (!show_paths) {
-        print_path(path); // Use the simple version
+        print_path(path);  // Use the simple version
         return;
     }
 
@@ -68,9 +81,9 @@ void QueryEngine::print_path(const std::vector<std::string> &path, const Graph &
         } else {
             std::cout << "    ";
         }
-
+        
         std::cout << path[i];
-
+        
         // Get file path for this symbol
         SymbolUID uid = graph.get_uid(path[i]);
         if (uid != INVALID_UID) {
