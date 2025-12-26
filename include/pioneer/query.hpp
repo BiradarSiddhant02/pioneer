@@ -79,6 +79,9 @@ private:
     // Iterative DFS for backward paths (backtrace)
     void dfs_backward(SymbolUID start, SymbolUID end, PathCallback &callback);
 
+    // Bidirectional DFS for A→B queries (meets in the middle, streams paths)
+    void dfs_bidirectional(SymbolUID start, SymbolUID end, PathCallback &callback);
+
     // DFS for data flow paths
     void dfs_data_flow(SymbolUID source, SymbolUID target, PathCallback &callback);
 };

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(pioneer VERSION 1.0.0 LANGUAGES C CXX)
+project(pioneer VERSION 2.1.0 LANGUAGES C CXX)
 
 # Prefer Clang compiler (warn if not using it)
 if(NOT CMAKE_C_COMPILER_ID MATCHES "Clang" OR NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -139,6 +139,7 @@ add_executable(pioneer
     src/parser.cpp
     src/query.cpp
     src/graph.cpp
+    src/streaming.cpp
 )
 
 target_include_directories(pioneer PRIVATE

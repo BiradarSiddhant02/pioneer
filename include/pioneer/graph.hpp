@@ -23,6 +23,13 @@ namespace pioneer {
 
 using json = nlohmann::json;
 
+// Load modes for selective loading - dramatically reduces memory for simple commands
+enum class LoadMode {
+    Full,        // Load everything (for query commands)
+    SymbolsOnly, // Only symbols + types (for search, list commands)
+    WithPaths    // Symbols + file paths (for search --show-path)
+};
+
 class Graph {
 public:
     CallGraph call_graph;
@@ -65,14 +72,17 @@ public:
     // Load from JSON
     static Graph from_json(const json &j);
 
-    // Load from file
+    // Load from file (full load for backward compatibility)
     static Graph load(const std::string &filepath);
+
+    // Load from file with selective loading mode
+    static Graph load(const std::string &filepath, LoadMode mode);
 
     // Get UID for symbol (for querying)
     SymbolUID get_uid(const std::string &name) const;
 
-    // Get symbol name from UID
-    std::string get_symbol(SymbolUID uid) const;
+    // Get symbol name from UID (returns reference to interned string - zero copy)
+    const std::string& get_symbol(SymbolUID uid) const;
 
     // Get callees for a caller
     const std::unordered_set<SymbolUID> &get_callees(SymbolUID caller) const;

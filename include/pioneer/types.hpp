@@ -16,13 +16,78 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <deque>
+#include <memory>
 #include <string>
+#include <string_view>
 #include <map>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
 namespace pioneer {
+
+// ============================================================================
+// String Pool - Intern strings to avoid duplication
+// ============================================================================
+class StringPool {
+public:
+    // Intern a string and return its index
+    size_t intern(const std::string& str) {
+        auto it = index_.find(str);
+        if (it != index_.end()) {
+            return it->second;
+        }
+        size_t idx = strings_.size();
+        strings_.push_back(str);
+        // Use string_view pointing to the stored string
+        index_[strings_.back()] = idx;
+        return idx;
+    }
+
+    // Get string by index
+    const std::string& get(size_t idx) const {
+        static const std::string empty;
+        return (idx < strings_.size()) ? strings_[idx] : empty;
+    }
+
+    // Get string_view by index (zero-copy)
+    std::string_view get_view(size_t idx) const {
+        return (idx < strings_.size()) ? std::string_view(strings_[idx]) : std::string_view();
+    }
+
+    // Check if string exists
+    bool contains(const std::string& str) const {
+        return index_.find(str) != index_.end();
+    }
+
+    // Get index for string (returns SIZE_MAX if not found)
+    size_t find(const std::string& str) const {
+        auto it = index_.find(str);
+        return (it != index_.end()) ? it->second : SIZE_MAX;
+    }
+
+    size_t size() const { return strings_.size(); }
+
+    // Shrink internal storage
+    void shrink_to_fit() {
+        strings_.shrink_to_fit();
+    }
+
+    // Clear all strings
+    void clear() {
+        strings_.clear();
+        index_.clear();
+    }
+
+    // Iterator support for all strings
+    auto begin() const { return strings_.begin(); }
+    auto end() const { return strings_.end(); }
+
+private:
+    std::vector<std::string> strings_;
+    std::unordered_map<std::string_view, size_t> index_;
+};
 
 // Symbol UID type - 64-bit unsigned integer
 using SymbolUID = uint64_t;
@@ -101,20 +166,24 @@ struct PathNode {
     std::vector<SymbolUID> file_uids;  // File UIDs instead of filenames
 };
 
-// Call graph representation using UIDs
+// Call graph representation using UIDs with string interning
 struct CallGraph {
-    // Symbol name -> UID mapping
+    // String pool for symbol names - single source of truth for strings
+    StringPool symbol_pool;
+
+    // Symbol name -> UID mapping (uses string_view into pool)
     std::unordered_map<std::string, SymbolUID> symbol_to_uid;
 
-    // UID -> Symbol name mapping (for reverse lookup)
-    std::unordered_map<SymbolUID, std::string> uid_to_symbol;
+    // UID -> String pool index (instead of storing duplicate strings)
+    std::unordered_map<SymbolUID, size_t> uid_to_string_idx;
 
     // Symbol type mapping
     std::unordered_map<SymbolUID, SymbolType> symbol_types;
 
-    // File tracking with UIDs
+    // File tracking with UIDs - uses separate pool for file paths
+    StringPool filepath_pool;
     std::unordered_map<std::string, SymbolUID> filepath_to_uid;  // filepath -> file UID
-    std::unordered_map<SymbolUID, std::string> file_uid_to_path;  // file UID -> filepath
+    std::unordered_map<SymbolUID, size_t> file_uid_to_path_idx;  // file UID -> filepath pool index
     std::unordered_map<SymbolUID, std::vector<SymbolUID>> file_to_symbols;  // file UID -> [symbol UIDs]
     std::unordered_map<SymbolUID, SymbolUID> symbol_to_file;  // symbol UID -> file UID
     SymbolUID next_file_uid = 1;  // Separate counter for file UIDs
@@ -137,7 +206,7 @@ struct CallGraph {
     // END symbol UID (set after all symbols are indexed)
     SymbolUID end_uid = INVALID_UID;
 
-    // Get or create UID for a symbol
+    // Get or create UID for a symbol (uses string interning)
     SymbolUID get_or_create_uid(const std::string &symbol_name,
                                 SymbolType type = SymbolType::Function) {
         auto it = symbol_to_uid.find(symbol_name);
@@ -145,8 +214,9 @@ struct CallGraph {
             return it->second;
         }
         SymbolUID uid = next_uid++;
+        size_t str_idx = symbol_pool.intern(symbol_name);
         symbol_to_uid[symbol_name] = uid;
-        uid_to_symbol[uid] = symbol_name;
+        uid_to_string_idx[uid] = str_idx;
         symbol_types[uid] = type;
         return uid;
     }
@@ -157,12 +227,14 @@ struct CallGraph {
         return (it != symbol_to_uid.end()) ? it->second : INVALID_UID;
     }
 
-    // Get symbol name from UID
-    std::string get_symbol(SymbolUID uid) const {
+    // Get symbol name from UID (returns reference to interned string)
+    const std::string& get_symbol(SymbolUID uid) const {
+        static const std::string end_str = "END";
+        static const std::string empty_str;
         if (uid == end_uid)
-            return "END";
-        auto it = uid_to_symbol.find(uid);
-        return (it != uid_to_symbol.end()) ? it->second : "";
+            return end_str;
+        auto it = uid_to_string_idx.find(uid);
+        return (it != uid_to_string_idx.end()) ? symbol_pool.get(it->second) : empty_str;
     }
 
     // Get symbol type
@@ -189,8 +261,9 @@ struct CallGraph {
     // Finalize the graph - add END node and connect leaf nodes
     void finalize() {
         end_uid = next_uid++;
+        size_t end_str_idx = symbol_pool.intern("END");
         symbol_to_uid["END"] = end_uid;
-        uid_to_symbol[end_uid] = "END";
+        uid_to_string_idx[end_uid] = end_str_idx;
         symbol_types[end_uid] = SymbolType::End;
 
         // Find all leaf nodes (functions that don't call anyone)
@@ -208,6 +281,26 @@ struct CallGraph {
                 add_call(uid, end_uid);
             }
         }
+
+        // Shrink all internal containers after finalization
+        shrink_to_fit();
+    }
+
+    // Reclaim unused memory from all containers
+    void shrink_to_fit() {
+        symbol_pool.shrink_to_fit();
+        filepath_pool.shrink_to_fit();
+        // Shrink vectors in file_to_symbols
+        for (auto& [uid, symbols] : file_to_symbols) {
+            symbols.shrink_to_fit();
+        }
+    }
+
+    // Get file path from file UID
+    const std::string& get_file_path(SymbolUID file_uid) const {
+        static const std::string empty_str;
+        auto it = file_uid_to_path_idx.find(file_uid);
+        return (it != file_uid_to_path_idx.end()) ? filepath_pool.get(it->second) : empty_str;
     }
 
     // Get number of symbols (excluding END)

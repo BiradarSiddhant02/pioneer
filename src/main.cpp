@@ -16,21 +16,20 @@
 #include <iostream>
 
 #include "pioneer/commands.hpp"
+#include "pioneer/version.hpp"
 
 using namespace pioneer;
 
-constexpr const char *VERSION = "2.0.0";
-
 void print_banner() {
     std::cout << R"(
-  ____  _ ...........................                         
+  ____  _                           
  |  _ \(_) ___  _ __   ___  ___ _ __ 
  | |_) | |/ _ \| '_ \ / _ \/ _ \ '__|
- |  __/| | (_) | | | |  __/  __/ |...   
- |_|...|_|\___/|_| |_|\___|\___|_|...   
+ |  __/| | (_) | | | |  __/  __/ |   
+ |_|   |_|\___/|_| |_|\___|\___|_|   
                                      
 )" << "  Call Graph Analyzer v"
-              << VERSION << "\n"
+              << VERSION_STRING << "\n"
               << std::endl;
 }
 
@@ -116,7 +115,7 @@ int main(int argc, char *argv[]) {
         }
 
         if (result.count("version")) {
-            std::cout << "pioneer v" << VERSION << std::endl;
+            std::cout << "pioneer v" << VERSION_STRING << std::endl;
             return 0;
         }
 
@@ -129,7 +128,7 @@ int main(int argc, char *argv[]) {
         }
 
         if (result.count("list")) {
-            return cmd_list_symbols(nosort);
+            return cmd_list_symbols_streaming(nosort);
         }
 
         if (result.count("type")) {
@@ -142,8 +141,13 @@ int main(int argc, char *argv[]) {
         if (result.count("search")) {
             auto patterns = result["search"].as<std::vector<std::string>>();
             if (!patterns.empty()) {
+                // Use streaming search when show_path not needed (much lower memory)
+                if (!show_path) {
+                    return cmd_search_streaming(patterns, nosort);
+                }
+                // Fall back to full load for --show-path
                 Graph graph;
-                if (!load_graph(graph)) {
+                if (!load_graph(graph, LoadMode::WithPaths)) {
                     return 1;
                 }
                 return cmd_search(patterns, nosort, show_path, graph);
@@ -156,7 +160,7 @@ int main(int argc, char *argv[]) {
                 unsigned int num_threads = result["jobs"].as<unsigned int>();
                 bool use_regex = result.count("regex") > 0;
                 bool ignore_case = result.count("ignore-case") > 0;
-                return cmd_grep(pattern, num_threads, use_regex, ignore_case);
+                return cmd_grep_streaming(pattern, num_threads, use_regex, ignore_case);
             }
         }
 

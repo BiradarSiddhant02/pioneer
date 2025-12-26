@@ -130,7 +130,8 @@ void QueryEngine::find_paths(const std::string &start, const std::string &end,
         return;
     }
 
-    dfs_forward(start_uid, end_uid, callback);
+    // Use bidirectional search for specific A→B queries (faster for large graphs)
+    dfs_bidirectional(start_uid, end_uid, callback);
 }
 
 void QueryEngine::backtrace(const std::string &symbol, PathCallback callback) {
@@ -156,32 +157,36 @@ void QueryEngine::forward_trace(const std::string &symbol, PathCallback callback
     dfs_forward(start_uid, end_uid, callback);
 }
 
+// Optimized DFS using iterators instead of copying callee vectors
 void QueryEngine::dfs_forward(SymbolUID start, SymbolUID end, PathCallback &callback) {
+    // State stores iterators into the graph's callee sets - NO COPYING
     struct State {
         SymbolUID node;
-        size_t callee_index;
-        std::vector<SymbolUID> callees;
+        std::unordered_set<SymbolUID>::const_iterator current_it;
+        std::unordered_set<SymbolUID>::const_iterator end_it;
     };
 
-    std::stack<State> stack;
-    std::deque<SymbolUID> current_path;
+    std::vector<State> stack;  // Use vector for better cache locality
+    stack.reserve(256);  // Pre-allocate reasonable depth
+    
+    std::vector<SymbolUID> current_path;
+    current_path.reserve(256);
+    
     std::unordered_set<SymbolUID> in_path;
-    State initial;
-    initial.node = start;
-    initial.callee_index = 0;
-    const auto &start_callees = graph_.get_callees(start);
-    initial.callees.assign(start_callees.begin(), start_callees.end());
+    in_path.reserve(256);
 
-    stack.push(initial);
+    // Initialize with start node
+    const auto &start_callees = graph_.get_callees(start);
+    stack.push_back({start, start_callees.begin(), start_callees.end()});
     current_path.push_back(start);
     in_path.insert(start);
 
     while (!stack.empty()) {
-        State &state = stack.top();
+        State &state = stack.back();
 
         // Check if we've reached the target
         if (state.node == end) {
-            // Convert path to strings and invoke callback
+            // Convert path to strings and invoke callback (stream immediately)
             std::vector<std::string> path_str;
             path_str.reserve(current_path.size());
             for (SymbolUID uid : current_path) {
@@ -195,29 +200,24 @@ void QueryEngine::dfs_forward(SymbolUID start, SymbolUID end, PathCallback &call
             // Backtrack
             in_path.erase(state.node);
             current_path.pop_back();
-            stack.pop();
+            stack.pop_back();
             continue;
         }
 
-        // Find next callee to explore
+        // Find next callee to explore using iterator
         bool found_next = false;
-        while (state.callee_index < state.callees.size()) {
-            SymbolUID callee = state.callees[state.callee_index];
-            state.callee_index++;
+        while (state.current_it != state.end_it) {
+            SymbolUID callee = *state.current_it;
+            ++state.current_it;
 
             // Skip if already in path (cycle)
-            if (in_path.find(callee) != in_path.end()) {
+            if (in_path.count(callee)) {
                 continue;
             }
 
-            // Push new state
-            State next;
-            next.node = callee;
-            next.callee_index = 0;
+            // Push new state with iterators into callee's adjacency set
             const auto &next_callees = graph_.get_callees(callee);
-            next.callees.assign(next_callees.begin(), next_callees.end());
-
-            stack.push(next);
+            stack.push_back({callee, next_callees.begin(), next_callees.end()});
             current_path.push_back(callee);
             in_path.insert(callee);
             found_next = true;
@@ -227,33 +227,37 @@ void QueryEngine::dfs_forward(SymbolUID start, SymbolUID end, PathCallback &call
         if (!found_next) {
             in_path.erase(state.node);
             current_path.pop_back();
-            stack.pop();
+            stack.pop_back();
         }
     }
 }
 
+// Optimized backward DFS using iterators instead of copying caller vectors
 void QueryEngine::dfs_backward(SymbolUID start, SymbolUID end, PathCallback &callback) {
+    // State stores iterators into the graph's caller sets - NO COPYING
     struct State {
         SymbolUID node;
-        size_t caller_index;
-        std::vector<SymbolUID> callers;
+        std::unordered_set<SymbolUID>::const_iterator current_it;
+        std::unordered_set<SymbolUID>::const_iterator end_it;
     };
 
-    std::stack<State> stack;
-    std::deque<SymbolUID> current_path;
+    std::vector<State> stack;
+    stack.reserve(256);
+    
+    std::vector<SymbolUID> current_path;
+    current_path.reserve(256);
+    
     std::unordered_set<SymbolUID> in_path;
-    State initial;
-    initial.node = start;
-    initial.caller_index = 0;
-    const auto &start_callers = graph_.get_callers(start);
-    initial.callers.assign(start_callers.begin(), start_callers.end());
+    in_path.reserve(256);
 
-    stack.push(initial);
+    // Initialize with start node
+    const auto &start_callers = graph_.get_callers(start);
+    stack.push_back({start, start_callers.begin(), start_callers.end()});
     current_path.push_back(start);
     in_path.insert(start);
 
     while (!stack.empty()) {
-        State &state = stack.top();
+        State &state = stack.back();
 
         // Check if we've reached a root (no more callers) or specific end
         const auto &callers = graph_.get_callers(state.node);
@@ -261,7 +265,7 @@ void QueryEngine::dfs_backward(SymbolUID start, SymbolUID end, PathCallback &cal
         bool is_end = (end != INVALID_UID && state.node == end);
 
         if (is_root || is_end) {
-            // Convert path to strings (reverse to show caller -> callee)
+            // Convert path to strings (reverse to show caller -> callee) and stream immediately
             std::vector<std::string> path_str;
             path_str.reserve(current_path.size());
             for (auto it = current_path.rbegin(); it != current_path.rend(); ++it) {
@@ -275,29 +279,24 @@ void QueryEngine::dfs_backward(SymbolUID start, SymbolUID end, PathCallback &cal
             // Backtrack
             in_path.erase(state.node);
             current_path.pop_back();
-            stack.pop();
+            stack.pop_back();
             continue;
         }
 
-        // Find next caller to explore
+        // Find next caller to explore using iterator
         bool found_next = false;
-        while (state.caller_index < state.callers.size()) {
-            SymbolUID caller = state.callers[state.caller_index];
-            state.caller_index++;
+        while (state.current_it != state.end_it) {
+            SymbolUID caller = *state.current_it;
+            ++state.current_it;
 
             // Skip if already in path (cycle)
-            if (in_path.find(caller) != in_path.end()) {
+            if (in_path.count(caller)) {
                 continue;
             }
 
-            // Push new state
-            State next;
-            next.node = caller;
-            next.caller_index = 0;
+            // Push new state with iterators
             const auto &next_callers = graph_.get_callers(caller);
-            next.callers.assign(next_callers.begin(), next_callers.end());
-
-            stack.push(next);
+            stack.push_back({caller, next_callers.begin(), next_callers.end()});
             current_path.push_back(caller);
             in_path.insert(caller);
             found_next = true;
@@ -307,7 +306,119 @@ void QueryEngine::dfs_backward(SymbolUID start, SymbolUID end, PathCallback &cal
         if (!found_next) {
             in_path.erase(state.node);
             current_path.pop_back();
-            stack.pop();
+            stack.pop_back();
+        }
+    }
+}
+
+// Bidirectional DFS: search from both start and end, meet in the middle
+// Streams paths as soon as they are found
+void QueryEngine::dfs_bidirectional(SymbolUID start, SymbolUID end, PathCallback &callback) {
+    // First, do a backward BFS from end to find all nodes reachable backward
+    // Then do forward DFS from start, pruning branches that can't reach end
+    
+    // Phase 1: Build backward reachability set from end (limited BFS)
+    std::unordered_set<SymbolUID> can_reach_end;
+    std::unordered_map<SymbolUID, std::vector<SymbolUID>> backward_paths;  // node -> predecessors toward end
+    
+    {
+        std::vector<SymbolUID> queue;
+        queue.push_back(end);
+        can_reach_end.insert(end);
+        
+        size_t head = 0;
+        while (head < queue.size()) {
+            SymbolUID node = queue[head++];
+            
+            // Get callers of this node (going backward)
+            const auto &callers = graph_.get_callers(node);
+            for (SymbolUID caller : callers) {
+                if (can_reach_end.insert(caller).second) {
+                    queue.push_back(caller);
+                }
+            }
+        }
+        queue.shrink_to_fit();
+    }
+    
+    // If start can't reach end at all, return early
+    if (!can_reach_end.count(start)) {
+        return;  // No paths exist
+    }
+    
+    // Phase 2: Forward DFS from start, only exploring nodes that can reach end
+    struct State {
+        SymbolUID node;
+        std::unordered_set<SymbolUID>::const_iterator current_it;
+        std::unordered_set<SymbolUID>::const_iterator end_it;
+    };
+
+    std::vector<State> stack;
+    stack.reserve(256);
+    
+    std::vector<SymbolUID> current_path;
+    current_path.reserve(256);
+    
+    std::unordered_set<SymbolUID> in_path;
+    in_path.reserve(256);
+
+    const auto &start_callees = graph_.get_callees(start);
+    stack.push_back({start, start_callees.begin(), start_callees.end()});
+    current_path.push_back(start);
+    in_path.insert(start);
+
+    while (!stack.empty()) {
+        State &state = stack.back();
+
+        // Check if we've reached the target
+        if (state.node == end) {
+            // Convert path to strings and stream immediately
+            std::vector<std::string> path_str;
+            path_str.reserve(current_path.size());
+            for (SymbolUID uid : current_path) {
+                path_str.push_back(graph_.get_symbol(uid));
+            }
+
+            if (!callback(path_str)) {
+                return; // Callback requested stop
+            }
+
+            // Backtrack
+            in_path.erase(state.node);
+            current_path.pop_back();
+            stack.pop_back();
+            continue;
+        }
+
+        // Find next callee to explore (only if it can reach end)
+        bool found_next = false;
+        while (state.current_it != state.end_it) {
+            SymbolUID callee = *state.current_it;
+            ++state.current_it;
+
+            // Skip if already in path (cycle)
+            if (in_path.count(callee)) {
+                continue;
+            }
+            
+            // PRUNING: Skip if this callee can't reach end
+            if (!can_reach_end.count(callee)) {
+                continue;
+            }
+
+            // Push new state
+            const auto &next_callees = graph_.get_callees(callee);
+            stack.push_back({callee, next_callees.begin(), next_callees.end()});
+            current_path.push_back(callee);
+            in_path.insert(callee);
+            found_next = true;
+            break;
+        }
+
+        if (!found_next) {
+            in_path.erase(state.node);
+            current_path.pop_back();
+            stack.pop_back();
         }
     }
 }
@@ -363,6 +474,7 @@ std::vector<std::string> QueryEngine::variables_in(const std::string &func_patte
         }
     }
 
+    vars.shrink_to_fit();
     return vars;
 }
 
@@ -384,32 +496,34 @@ void QueryEngine::find_data_flow_paths(const std::string &source, const std::str
     dfs_data_flow(src_uid, var_uid, callback);
 }
 
+// Optimized data flow DFS using iterators instead of copying sink vectors
 void QueryEngine::dfs_data_flow(SymbolUID source, SymbolUID target, PathCallback &callback) {
     struct State {
         SymbolUID node;
-        size_t sink_index;
-        std::vector<SymbolUID> sinks;
+        std::unordered_set<SymbolUID>::const_iterator current_it;
+        std::unordered_set<SymbolUID>::const_iterator end_it;
     };
 
-    std::stack<State> stack;
-    std::deque<SymbolUID> current_path;
+    std::vector<State> stack;
+    stack.reserve(128);
+    
+    std::vector<SymbolUID> current_path;
+    current_path.reserve(128);
+    
     std::unordered_set<SymbolUID> in_path;
-    State initial;
-    initial.node = source;
-    initial.sink_index = 0;
+    in_path.reserve(128);
+    
     const auto &init_sinks = graph_.get_data_sinks(source);
-    initial.sinks.assign(init_sinks.begin(), init_sinks.end());
-
-    stack.push(initial);
+    stack.push_back({source, init_sinks.begin(), init_sinks.end()});
     current_path.push_back(source);
     in_path.insert(source);
 
     while (!stack.empty()) {
-        State &state = stack.top();
+        State &state = stack.back();
 
         // Found target
         if (state.node == target && current_path.size() > 1) {
-            // Build path with symbol names
+            // Build path with symbol names and stream immediately
             std::vector<std::string> path;
             path.reserve(current_path.size());
             for (SymbolUID uid : current_path) {
@@ -422,29 +536,24 @@ void QueryEngine::dfs_data_flow(SymbolUID source, SymbolUID target, PathCallback
             // Backtrack
             in_path.erase(state.node);
             current_path.pop_back();
-            stack.pop();
+            stack.pop_back();
             continue;
         }
 
-        // Explore next sink
+        // Explore next sink using iterator
         bool found_next = false;
-        while (state.sink_index < state.sinks.size()) {
-            SymbolUID sink = state.sinks[state.sink_index];
-            state.sink_index++;
+        while (state.current_it != state.end_it) {
+            SymbolUID sink = *state.current_it;
+            ++state.current_it;
 
             // Skip if already in path (cycle)
-            if (in_path.find(sink) != in_path.end()) {
+            if (in_path.count(sink)) {
                 continue;
             }
 
-            // Push new state
-            State next;
-            next.node = sink;
-            next.sink_index = 0;
+            // Push new state with iterators
             const auto &next_sinks = graph_.get_data_sinks(sink);
-            next.sinks.assign(next_sinks.begin(), next_sinks.end());
-
-            stack.push(next);
+            stack.push_back({sink, next_sinks.begin(), next_sinks.end()});
             current_path.push_back(sink);
             in_path.insert(sink);
             found_next = true;
@@ -454,7 +563,7 @@ void QueryEngine::dfs_data_flow(SymbolUID source, SymbolUID target, PathCallback
         if (!found_next) {
             in_path.erase(state.node);
             current_path.pop_back();
-            stack.pop();
+            stack.pop_back();
         }
     }
 }

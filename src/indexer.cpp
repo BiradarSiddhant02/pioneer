@@ -308,6 +308,11 @@ Graph Indexer::index() {
     for (auto &t : threads) {
         t.join();
     }
+    
+    // Shrink vectors after all workers have finished to reclaim memory
+    all_functions.shrink_to_fit();
+    all_calls.shrink_to_fit();
+    all_variables.shrink_to_fit();
 
     std::cout << "\nParsing complete. Processing " << all_functions.size() << " functions, "
               << all_calls.size() << " calls, and " << all_variables.size() << " variables."
@@ -487,12 +492,14 @@ Graph Indexer::index() {
         }
     }
 
-    // Populate indexed_files_
+    // Populate indexed_files_ and shrink
+    indexed_files_.reserve(files.size());
     for (const auto &f : files) {
         indexed_files_.push_back(f.string());
     }
+    indexed_files_.shrink_to_fit();
 
-    // Finalize
+    // Finalize (this also calls shrink_to_fit on the call graph)
     graph.finalize();
 
     std::cout << "\nIndexing complete." << std::endl;
