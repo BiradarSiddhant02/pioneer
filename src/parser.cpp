@@ -57,9 +57,12 @@ LanguageParser::~LanguageParser() {
 
 LanguageParser::LanguageParser(LanguageParser &&other) noexcept
     : language_(other.language_), parser_(other.parser_), tree_(other.tree_),
-      source_(std::move(other.source_)) {
+      source_(std::move(other.source_)), source_ptr_(other.source_ptr_),
+      source_len_(other.source_len_) {
     other.parser_ = nullptr;
     other.tree_ = nullptr;
+    other.source_ptr_ = nullptr;
+    other.source_len_ = 0;
 }
 
 LanguageParser &LanguageParser::operator=(LanguageParser &&other) noexcept {
@@ -73,22 +76,43 @@ LanguageParser &LanguageParser::operator=(LanguageParser &&other) noexcept {
         parser_ = other.parser_;
         tree_ = other.tree_;
         source_ = std::move(other.source_);
+        source_ptr_ = other.source_ptr_;
+        source_len_ = other.source_len_;
 
         other.parser_ = nullptr;
         other.tree_ = nullptr;
+        other.source_ptr_ = nullptr;
+        other.source_len_ = 0;
     }
     return *this;
 }
 
 bool LanguageParser::parse(const std::string &source) {
     source_ = source;
+    source_ptr_ = source_.c_str();
+    source_len_ = source_.size();
 
     if (tree_) {
         ts_tree_delete(tree_);
         tree_ = nullptr;
     }
 
-    tree_ = ts_parser_parse_string(parser_, nullptr, source_.c_str(), source_.size());
+    tree_ = ts_parser_parse_string(parser_, nullptr, source_ptr_, source_len_);
+    return tree_ != nullptr;
+}
+
+bool LanguageParser::parse(const char *data, size_t length) {
+    // Zero-copy parsing - don't copy data into source_
+    source_.clear();
+    source_ptr_ = data;
+    source_len_ = length;
+
+    if (tree_) {
+        ts_tree_delete(tree_);
+        tree_ = nullptr;
+    }
+
+    tree_ = ts_parser_parse_string(parser_, nullptr, source_ptr_, source_len_);
     return tree_ != nullptr;
 }
 
@@ -102,8 +126,8 @@ TSNode LanguageParser::root() const {
 std::string LanguageParser::node_text(TSNode node) const {
     uint32_t start = ts_node_start_byte(node);
     uint32_t end = ts_node_end_byte(node);
-    if (start < source_.size() && end <= source_.size()) {
-        return source_.substr(start, end - start);
+    if (source_ptr_ && start < source_len_ && end <= source_len_) {
+        return std::string(source_ptr_ + start, end - start);
     }
     return "";
 }

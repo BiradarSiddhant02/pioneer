@@ -18,56 +18,57 @@
 
 namespace pioneer {
 
-// ============================================================================
-// StreamingSearchHandler - SAX handler for symbol search
-// ============================================================================
-
-StreamingSearchHandler::StreamingSearchHandler(const std::vector<std::string>& p, 
-                                               std::vector<std::string>& m)
+StreamingSearchHandler::StreamingSearchHandler(const std::vector<std::string> &p,
+                                               std::vector<std::string> &m)
     : patterns(p), matches(m) {}
 
 bool StreamingSearchHandler::null() { return true; }
 bool StreamingSearchHandler::boolean(bool) { return true; }
 bool StreamingSearchHandler::number_integer(number_integer_t) { return true; }
 bool StreamingSearchHandler::number_unsigned(number_unsigned_t) { return true; }
-bool StreamingSearchHandler::number_float(number_float_t, const string_t&) { return true; }
-bool StreamingSearchHandler::string(string_t&) { return true; }
-bool StreamingSearchHandler::binary(binary_t&) { return true; }
+bool StreamingSearchHandler::number_float(number_float_t, const string_t &) { return true; }
+bool StreamingSearchHandler::string(string_t &) { return true; }
+bool StreamingSearchHandler::binary(binary_t &) { return true; }
 
 bool StreamingSearchHandler::start_object(std::size_t) {
     depth++;
-    if (skip_depth > 0) skip_depth++;
+    if (skip_depth > 0)
+        skip_depth++;
     return true;
 }
 
 bool StreamingSearchHandler::end_object() {
     depth--;
-    if (skip_depth > 0) skip_depth--;
+    if (skip_depth > 0)
+        skip_depth--;
     if (depth == 2 && in_uids) {
-        in_uids = false;  // Exiting UIDs section - we're done!
-        return false;     // Stop parsing early
+        in_uids = false; // Exiting UIDs section - we're done!
+        return false;    // Stop parsing early
     }
     return true;
 }
 
 bool StreamingSearchHandler::start_array(std::size_t) {
-    if (skip_depth == 0) skip_depth = 1;  // Skip arrays
+    if (skip_depth == 0)
+        skip_depth = 1; // Skip arrays
     return true;
 }
 
 bool StreamingSearchHandler::end_array() {
-    if (skip_depth > 0) skip_depth--;
+    if (skip_depth > 0)
+        skip_depth--;
     return true;
 }
 
-bool StreamingSearchHandler::key(string_t& key) {
-    if (skip_depth > 0) return true;
-    
+bool StreamingSearchHandler::key(string_t &key) {
+    if (skip_depth > 0)
+        return true;
+
     if (depth == 2 && key == "UIDs") {
         in_uids = true;
     } else if (in_uids && depth == 3) {
         // key is a symbol name - check if it matches any pattern
-        for (const auto& pattern : patterns) {
+        for (const auto &pattern : patterns) {
             if (key.find(pattern) != std::string::npos) {
                 matches.push_back(key);
                 break;
@@ -80,26 +81,21 @@ bool StreamingSearchHandler::key(string_t& key) {
     return true;
 }
 
-bool StreamingSearchHandler::parse_error(std::size_t, const std::string&, 
-                                          const nlohmann::json::exception&) {
+bool StreamingSearchHandler::parse_error(std::size_t, const std::string &,
+                                         const nlohmann::json::exception &) {
     return false;
 }
 
-// ============================================================================
-// StreamingFilePathHandler - SAX handler for file path extraction
-// ============================================================================
-
-StreamingFilePathHandler::StreamingFilePathHandler(std::vector<std::string>& p) 
-    : paths(p) {}
+StreamingFilePathHandler::StreamingFilePathHandler(std::vector<std::string> &p) : paths(p) {}
 
 bool StreamingFilePathHandler::null() { return true; }
 bool StreamingFilePathHandler::boolean(bool) { return true; }
 bool StreamingFilePathHandler::number_integer(number_integer_t) { return true; }
 bool StreamingFilePathHandler::number_unsigned(number_unsigned_t) { return true; }
-bool StreamingFilePathHandler::number_float(number_float_t, const string_t&) { return true; }
-bool StreamingFilePathHandler::binary(binary_t&) { return true; }
+bool StreamingFilePathHandler::number_float(number_float_t, const string_t &) { return true; }
+bool StreamingFilePathHandler::binary(binary_t &) { return true; }
 
-bool StreamingFilePathHandler::string(string_t& val) {
+bool StreamingFilePathHandler::string(string_t &val) {
     if (in_file_paths && skip_depth == 0) {
         paths.push_back(val);
     }
@@ -108,34 +104,39 @@ bool StreamingFilePathHandler::string(string_t& val) {
 
 bool StreamingFilePathHandler::start_object(std::size_t) {
     depth++;
-    if (skip_depth > 0) skip_depth++;
+    if (skip_depth > 0)
+        skip_depth++;
     return true;
 }
 
 bool StreamingFilePathHandler::end_object() {
     depth--;
-    if (skip_depth > 0) skip_depth--;
+    if (skip_depth > 0)
+        skip_depth--;
     if (depth == 1 && in_file_paths) {
         in_file_paths = false;
-        return false;  // Stop parsing - we got all file paths
+        return false; // Stop parsing - we got all file paths
     }
     return true;
 }
 
 bool StreamingFilePathHandler::start_array(std::size_t) {
-    if (skip_depth == 0) skip_depth = 1;
+    if (skip_depth == 0)
+        skip_depth = 1;
     return true;
 }
 
 bool StreamingFilePathHandler::end_array() {
-    if (skip_depth > 0) skip_depth--;
+    if (skip_depth > 0)
+        skip_depth--;
     return true;
 }
 
-bool StreamingFilePathHandler::key(string_t& key) {
-    if (skip_depth > 0) return true;
+bool StreamingFilePathHandler::key(string_t &key) {
+    if (skip_depth > 0)
+        return true;
     current_key = key;
-    
+
     if (depth == 1) {
         if (key == "file_paths") {
             in_file_paths = true;
@@ -147,39 +148,35 @@ bool StreamingFilePathHandler::key(string_t& key) {
     return true;
 }
 
-bool StreamingFilePathHandler::parse_error(std::size_t, const std::string&, 
-                                            const nlohmann::json::exception&) {
+bool StreamingFilePathHandler::parse_error(std::size_t, const std::string &,
+                                           const nlohmann::json::exception &) {
     return false;
 }
 
-// ============================================================================
-// Streaming utility functions
-// ============================================================================
-
-std::vector<std::string> stream_search_symbols(const std::string& index_file,
-                                                const std::vector<std::string>& patterns) {
+std::vector<std::string> stream_search_symbols(const std::string &index_file,
+                                               const std::vector<std::string> &patterns) {
     std::ifstream file(index_file);
     if (!file.is_open()) {
         throw std::runtime_error("Cannot open index file: " + index_file);
     }
-    
+
     std::vector<std::string> matches;
     StreamingSearchHandler handler(patterns, matches);
     nlohmann::json::sax_parse(file, &handler);
     return matches;
 }
 
-std::vector<std::string> stream_all_symbols(const std::string& index_file) {
-    std::vector<std::string> all_patterns = {""};  // Empty pattern matches everything
+std::vector<std::string> stream_all_symbols(const std::string &index_file) {
+    std::vector<std::string> all_patterns = {""}; // Empty pattern matches everything
     return stream_search_symbols(index_file, all_patterns);
 }
 
-std::vector<std::string> stream_file_paths(const std::string& index_file) {
+std::vector<std::string> stream_file_paths(const std::string &index_file) {
     std::ifstream file(index_file);
     if (!file.is_open()) {
         throw std::runtime_error("Cannot open index file: " + index_file);
     }
-    
+
     std::vector<std::string> paths;
     StreamingFilePathHandler handler(paths);
     nlohmann::json::sax_parse(file, &handler);

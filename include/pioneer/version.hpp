@@ -16,54 +16,42 @@
 
 namespace pioneer {
 
-// ============================================================================
-// Pioneer Version Information
-// ============================================================================
-
-// Application version (displayed to users)
 constexpr int VERSION_MAJOR = 2;
-constexpr int VERSION_MINOR = 1;
+constexpr int VERSION_MINOR = 2;
 constexpr int VERSION_PATCH = 0;
+constexpr const char *VERSION_STRING = "2.2.0";
 
-// Version string for display
-constexpr const char* VERSION_STRING = "2.1.0";
-
-// Index file schema version (for compatibility checking)
-// Increment when index file format changes
 constexpr int INDEX_SCHEMA_MAJOR = 2;
-constexpr int INDEX_SCHEMA_MINOR = 1;
+constexpr int INDEX_SCHEMA_MINOR = 2;
 constexpr int INDEX_SCHEMA_PATCH = 0;
-constexpr const char* INDEX_SCHEMA_VERSION = "2.1.0";
+constexpr const char *INDEX_SCHEMA_VERSION = "2.2.0";
 
-// Minimum compatible index schema version (for loading old indexes)
 constexpr int MIN_COMPAT_SCHEMA_MAJOR = 1;
 constexpr int MIN_COMPAT_SCHEMA_MINOR = 2;
 constexpr int MIN_COMPAT_SCHEMA_PATCH = 0;
 
-// Check if a schema version is compatible
 inline bool is_schema_compatible(int major, int minor, int /*patch*/) {
-    // Same major version and >= minimum minor
     if (major == INDEX_SCHEMA_MAJOR) {
-        return true;  // Same major version, always compatible
+        return true;
     }
-    // Check against minimum compatible version
     if (major > MIN_COMPAT_SCHEMA_MAJOR) {
-        return false;  // Future version, not compatible
+        return false;
     }
     if (major == MIN_COMPAT_SCHEMA_MAJOR && minor >= MIN_COMPAT_SCHEMA_MINOR) {
-        return true;  // Meets minimum requirements
+        return true;
     }
     return false;
 }
 
-// Parse version string "X.Y.Z" into components
-inline bool parse_version(const std::string& version, int& major, int& minor, int& patch) {
+inline bool parse_version(const std::string &version, int &major, int &minor, int &patch) {
     size_t pos1 = version.find('.');
-    if (pos1 == std::string::npos) return false;
-    
+    if (pos1 == std::string::npos)
+        return false;
+
     size_t pos2 = version.find('.', pos1 + 1);
-    if (pos2 == std::string::npos) return false;
-    
+    if (pos2 == std::string::npos)
+        return false;
+
     try {
         major = std::stoi(version.substr(0, pos1));
         minor = std::stoi(version.substr(pos1 + 1, pos2 - pos1 - 1));

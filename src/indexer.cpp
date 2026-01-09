@@ -14,20 +14,18 @@
 
 #include "pioneer/indexer.hpp"
 #include <algorithm>
-#include <fstream>
 #include <iostream>
-#include <sstream>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 
 namespace pioneer {
 
 Indexer::Indexer(const IndexerConfig &config) : config_(config) {
-    // Auto-detect thread count if not specified
     if (config_.num_threads == 0) {
         config_.num_threads = std::thread::hardware_concurrency();
         if (config_.num_threads == 0)
-            config_.num_threads = 4; // Fallback
+            config_.num_threads = 4;
     }
 }
 
@@ -40,7 +38,6 @@ bool Indexer::should_ignore(const fs::path &path) const {
         }
     }
 
-    // Ignore hidden files/directories
     for (const auto &component : path) {
         std::string comp = component.string();
         if (!comp.empty() && comp[0] == '.' && comp != "." && comp != "..") {
@@ -60,7 +57,6 @@ std::vector<fs::path> Indexer::discover_files() {
         return files;
     }
 
-    // Iterative directory traversal
     std::vector<fs::path> dirs_to_visit;
     dirs_to_visit.push_back(root);
 
@@ -96,38 +92,31 @@ std::vector<fs::path> Indexer::discover_files() {
 bool Indexer::parse_file(const fs::path &filepath, std::vector<FunctionInfo> &functions_out,
                          std::vector<CallInfo> &calls_out,
                          std::vector<VariableInfo> &variables_out) {
-    // Read file
-    std::ifstream file(filepath);
-    if (!file.is_open())
+    MemoryMappedFile mmap;
+    if (!mmap.open(filepath.string()))
         return false;
 
-    std::stringstream buffer;
-    buffer << file.rdbuf();
-    std::string source = buffer.str();
+    if (mmap.size() == 0)
+        return true;
 
-    // Determine language
     std::string ext = filepath.extension().string();
     Language lang = language_from_extension(ext);
     if (lang == Language::Unknown)
         return false;
 
-    // Parse
     auto parser = create_parser(lang);
-    if (!parser || !parser->parse(source))
+    if (!parser || !parser->parse(mmap.data(), mmap.size()))
         return false;
 
-    // Get file prefix for C
     std::string file_prefix = filepath.filename().string();
     size_t dot = file_prefix.rfind('.');
     if (dot != std::string::npos) {
         file_prefix = file_prefix.substr(0, dot);
     }
 
-    // Extract functions
     auto functions = parser->extract_functions();
 
     for (auto &func : functions) {
-        // Add file prefix for C functions
         if (func.qualified_name.find("::") == std::string::npos &&
             func.qualified_name.find(".") == std::string::npos) {
             if (lang == Language::C) {
@@ -141,7 +130,6 @@ bool Indexer::parse_file(const fs::path &filepath, std::vector<FunctionInfo> &fu
         info.param_types = func.param_types;
         functions_out.push_back(std::move(info));
 
-        // Extract calls for this function
         auto calls = parser->extract_calls(func);
         for (const auto &call : calls) {
             CallInfo ci;
@@ -150,7 +138,6 @@ bool Indexer::parse_file(const fs::path &filepath, std::vector<FunctionInfo> &fu
             calls_out.push_back(std::move(ci));
         }
 
-        // Extract variables for this function (v1.1.0)
         auto vars = parser->extract_variables(func);
         for (const auto &var : vars) {
             VariableInfo vi;
@@ -171,13 +158,12 @@ void Indexer::worker_parse_files(const std::vector<fs::path> &files, size_t star
                                  std::vector<VariableInfo> &all_variables,
                                  std::mutex &functions_mutex, std::mutex &calls_mutex,
                                  std::mutex &variables_mutex) {
-    // Thread-local storage to minimize lock contention
     std::vector<FunctionInfo> local_functions;
     std::vector<CallInfo> local_calls;
     std::vector<VariableInfo> local_variables;
-    local_functions.reserve(1000);
-    local_calls.reserve(5000);
-    local_variables.reserve(2000);
+    local_functions.reserve(500);
+    local_calls.reserve(2000);
+    local_variables.reserve(1000);
 
     for (size_t i = start_idx; i < end_idx; ++i) {
         const auto &filepath = files[i];
@@ -203,15 +189,13 @@ void Indexer::worker_parse_files(const std::vector<fs::path> &files, size_t star
             stats_.calls_found += file_calls.size();
             stats_.variables_found += file_variables.size();
 
-            // Print progress (with lock to avoid garbled output)
             {
                 std::lock_guard<std::mutex> lock(output_mutex_);
                 std::cout << "Parsed: " << filepath.string() << std::endl;
             }
         }
 
-        // Periodically flush to global to limit peak memory
-        if (local_functions.size() > 10000) {
+        if (local_functions.size() > 2000) {
             {
                 std::lock_guard<std::mutex> lock(functions_mutex);
                 all_functions.insert(all_functions.end(),
@@ -219,18 +203,18 @@ void Indexer::worker_parse_files(const std::vector<fs::path> &files, size_t star
                                      std::make_move_iterator(local_functions.end()));
             }
             local_functions.clear();
-            local_functions.reserve(1000);
+            local_functions.reserve(500);
         }
-        if (local_calls.size() > 50000) {
+        if (local_calls.size() > 10000) {
             {
                 std::lock_guard<std::mutex> lock(calls_mutex);
                 all_calls.insert(all_calls.end(), std::make_move_iterator(local_calls.begin()),
                                  std::make_move_iterator(local_calls.end()));
             }
             local_calls.clear();
-            local_calls.reserve(5000);
+            local_calls.reserve(2000);
         }
-        if (local_variables.size() > 20000) {
+        if (local_variables.size() > 5000) {
             {
                 std::lock_guard<std::mutex> lock(variables_mutex);
                 all_variables.insert(all_variables.end(),
@@ -238,7 +222,7 @@ void Indexer::worker_parse_files(const std::vector<fs::path> &files, size_t star
                                      std::make_move_iterator(local_variables.end()));
             }
             local_variables.clear();
-            local_variables.reserve(2000);
+            local_variables.reserve(1000);
         }
     }
 
@@ -263,9 +247,7 @@ void Indexer::worker_parse_files(const std::vector<fs::path> &files, size_t star
 Graph Indexer::index() {
     Graph graph;
 
-    // Phase 1: Discover files
     auto files = discover_files();
-
     if (files.empty()) {
         std::cout << "No source files found to index." << std::endl;
         return graph;
@@ -274,236 +256,163 @@ Graph Indexer::index() {
     std::cout << "Found " << files.size() << " source files to index." << std::endl;
     std::cout << "Using " << config_.num_threads << " threads." << std::endl;
 
-    // Phase 2: Parallel parsing
-    std::vector<FunctionInfo> all_functions;
-    std::vector<CallInfo> all_calls;
-    std::vector<VariableInfo> all_variables;
-    std::mutex functions_mutex;
-    std::mutex calls_mutex;
-    std::mutex variables_mutex;
+    const size_t BATCH_SIZE = files.size() > 50000 ? 2000 : files.size() > 10000 ? 5000 : 10000;
 
-    // Reserve estimated space
-    all_functions.reserve(files.size() * 20);
-    all_calls.reserve(files.size() * 100);
-    all_variables.reserve(files.size() * 50);
+    std::cout << "Processing in batches of " << BATCH_SIZE << " files." << std::endl;
 
-    // Create worker threads
-    std::vector<std::thread> threads;
-    size_t files_per_thread = (files.size() + config_.num_threads - 1) / config_.num_threads;
+    std::unordered_map<std::string, std::string> short_to_qualified;
+    short_to_qualified.reserve(std::min(files.size() * 5, (size_t)500000));
 
-    for (unsigned int t = 0; t < config_.num_threads; ++t) {
-        size_t start_idx = t * files_per_thread;
-        size_t end_idx = std::min(start_idx + files_per_thread, files.size());
+    size_t total_batches = (files.size() + BATCH_SIZE - 1) / BATCH_SIZE;
 
-        if (start_idx >= files.size())
-            break;
+    for (size_t batch = 0; batch < total_batches; ++batch) {
+        size_t batch_start = batch * BATCH_SIZE;
+        size_t batch_end = std::min(batch_start + BATCH_SIZE, files.size());
+        size_t batch_file_count = batch_end - batch_start;
 
-        threads.emplace_back(&Indexer::worker_parse_files, this, std::cref(files), start_idx,
-                             end_idx, std::ref(all_functions), std::ref(all_calls),
-                             std::ref(all_variables), std::ref(functions_mutex),
-                             std::ref(calls_mutex), std::ref(variables_mutex));
-    }
+        std::cout << "\n=== Batch " << (batch + 1) << "/" << total_batches << " (files "
+                  << batch_start << "-" << batch_end << ") ===" << std::endl;
 
-    // Wait for all threads
-    for (auto &t : threads) {
-        t.join();
-    }
-    
-    // Shrink vectors after all workers have finished to reclaim memory
-    all_functions.shrink_to_fit();
-    all_calls.shrink_to_fit();
-    all_variables.shrink_to_fit();
+        std::vector<FunctionInfo> batch_functions;
+        std::vector<CallInfo> batch_calls;
+        std::vector<VariableInfo> batch_variables;
+        std::mutex functions_mutex, calls_mutex, variables_mutex;
 
-    std::cout << "\nParsing complete. Processing " << all_functions.size() << " functions, "
-              << all_calls.size() << " calls, and " << all_variables.size() << " variables."
-              << std::endl;
+        batch_functions.reserve(batch_file_count * 10);
+        batch_calls.reserve(batch_file_count * 50);
+        batch_variables.reserve(batch_file_count * 25);
 
-    // Phase 3: Detect overloads (single-threaded, but fast)
-    std::unordered_map<std::string, std::vector<FunctionInfo *>> name_to_functions;
-    name_to_functions.reserve(all_functions.size());
+        std::vector<std::thread> threads;
+        size_t files_per_thread =
+            (batch_file_count + config_.num_threads - 1) / config_.num_threads;
 
-    for (auto &func : all_functions) {
-        name_to_functions[func.qualified_name].push_back(&func);
-    }
+        for (unsigned int t = 0; t < config_.num_threads; ++t) {
+            size_t start_idx = batch_start + t * files_per_thread;
+            size_t end_idx = std::min(start_idx + files_per_thread, batch_end);
 
-    // Phase 4: Build path Trie
+            if (start_idx >= batch_end)
+                break;
 
+            threads.emplace_back(&Indexer::worker_parse_files, this, std::cref(files), start_idx,
+                                 end_idx, std::ref(batch_functions), std::ref(batch_calls),
+                                 std::ref(batch_variables), std::ref(functions_mutex),
+                                 std::ref(calls_mutex), std::ref(variables_mutex));
+        }
 
-    // Build final name map (original base name -> final name with signature if overloaded)
-    // Key: "base_name|file_path" for overloaded, just "base_name" for unique
-    std::unordered_map<std::string, std::string> original_to_final;
-    original_to_final.reserve(all_functions.size());
+        for (auto &t : threads) {
+            t.join();
+        }
 
-    for (auto &[base_name, funcs] : name_to_functions) {
-        if (funcs.size() == 1) {
-            // No overload
-            original_to_final[base_name] = base_name;
-            graph.add_symbol(base_name, funcs[0]->file_path);
-        } else {
-            // Overloaded - add signatures
-            for (auto *func : funcs) {
-                std::string sig = build_param_signature(func->param_types);
-                std::string final_name = base_name + sig;
-                original_to_final[base_name + "|" + func->file_path] = final_name;
-                graph.add_symbol(final_name, func->file_path);
+        std::cout << "Batch parsed: " << batch_functions.size() << " functions, "
+                  << batch_calls.size() << " calls, " << batch_variables.size() << " variables."
+                  << std::endl;
+
+        // Process this batch: add functions to graph and build short name mapping
+        for (const auto &func : batch_functions) {
+            graph.add_symbol(func.qualified_name, func.file_path);
+
+            std::string short_name = func.qualified_name;
+            size_t last_sep = short_name.rfind("::");
+            if (last_sep != std::string::npos) {
+                short_name = short_name.substr(last_sep + 2);
+            }
+            if (short_to_qualified.find(short_name) == short_to_qualified.end()) {
+                short_to_qualified[short_name] = func.qualified_name;
             }
         }
-    }
 
-    // Build lookup for call resolution: base name -> list of final names
-    std::unordered_map<std::string, std::vector<std::string>> base_to_final_names;
-    for (const auto &[key, final_name] : original_to_final) {
-        std::string base = key;
-        size_t pipe = base.find('|');
-        if (pipe != std::string::npos) {
-            base = base.substr(0, pipe);
-        }
-        // Get just function name for matching calls
-        std::string func_name = base;
-        size_t last_sep = func_name.rfind("::");
-        if (last_sep != std::string::npos) {
-            func_name = func_name.substr(last_sep + 2);
-        }
-        base_to_final_names[func_name].push_back(final_name);
-    }
+        for (const auto &call : batch_calls) {
+            const std::string &caller = call.caller_name;
 
-    // Phase 4: Build call graph
-    std::cout << "Building call graph..." << std::endl;
-
-    // Map caller base names to their final names
-    std::unordered_map<std::string, std::string> caller_to_final;
-    for (const auto &func : all_functions) {
-        auto it = original_to_final.find(func.qualified_name);
-        if (it != original_to_final.end()) {
-            caller_to_final[func.qualified_name] = it->second;
-        } else {
-            auto it2 = original_to_final.find(func.qualified_name + "|" + func.file_path);
-            if (it2 != original_to_final.end()) {
-                caller_to_final[func.qualified_name + "|" + func.file_path] = it2->second;
+            std::string_view callee_view = call.callee_name;
+            size_t pos = callee_view.rfind("::");
+            if (pos != std::string_view::npos) {
+                callee_view = callee_view.substr(pos + 2);
             }
-        }
-    }
+            pos = callee_view.rfind('.');
+            if (pos != std::string_view::npos) {
+                callee_view = callee_view.substr(pos + 1);
+            }
+            std::string callee_short(callee_view);
 
-    // Create a set of all caller qualified_name|file_path for quick lookup
-    std::unordered_map<std::string, std::string> caller_lookup; // base -> final
-    for (const auto &func : all_functions) {
-        std::string key = func.qualified_name + "|" + func.file_path;
-        auto it = original_to_final.find(func.qualified_name);
-        if (it != original_to_final.end()) {
-            caller_lookup[func.qualified_name] = it->second;
-        }
-        auto it2 = original_to_final.find(key);
-        if (it2 != original_to_final.end()) {
-            caller_lookup[key] = it2->second;
-        }
-    }
+            const std::string *callee_ptr = &call.callee_name;
+            auto it = short_to_qualified.find(callee_short);
+            if (it != short_to_qualified.end()) {
+                callee_ptr = &it->second;
+            }
 
-    // Process calls
-    for (const auto &call : all_calls) {
-        // Find caller's final name
-        std::string caller_final = call.caller_name;
-        auto it = caller_lookup.find(call.caller_name);
-        if (it != caller_lookup.end()) {
-            caller_final = it->second;
+            if (!graph.has_symbol(*callee_ptr)) {
+                graph.add_symbol(*callee_ptr);
+            }
+            if (!graph.has_symbol(caller)) {
+                graph.add_symbol(caller);
+            }
+
+            graph.add_call(caller, *callee_ptr);
         }
 
-        // Find callee - strip qualifiers to get base name
-        std::string callee_base = call.callee_name;
-        size_t pos = callee_base.rfind("::");
-        if (pos != std::string::npos) {
-            callee_base = callee_base.substr(pos + 2);
-        }
-        pos = callee_base.rfind(".");
-        if (pos != std::string::npos) {
-            callee_base = callee_base.substr(pos + 1);
-        }
-
-        // Look for matching defined function
-        std::string callee_final = call.callee_name;
-        auto match_it = base_to_final_names.find(callee_base);
-        if (match_it != base_to_final_names.end() && !match_it->second.empty()) {
-            callee_final = match_it->second[0]; // Best effort: use first match
-        }
-
-        // Add symbols if not exists
-        if (!graph.has_symbol(callee_final)) {
-            graph.add_symbol(callee_final);
-        }
-        if (!graph.has_symbol(caller_final)) {
-            graph.add_symbol(caller_final);
-        }
-
-        graph.add_call(caller_final, callee_final);
-    }
-
-    // Phase 5: Process variables for data flow (v1.1.0)
-    std::cout << "Building data flow graph..." << std::endl;
-
-    // Build map of function qualified names to file paths
-    std::unordered_map<std::string, std::string> func_to_file;
-    for (const auto &func : all_functions) {
-        func_to_file[func.qualified_name] = func.file_path;
-    }
-
-    for (const auto &var : all_variables) {
-        // Determine file path from containing function
-        std::string var_file = "";
-        auto file_it = func_to_file.find(var.containing_func);
-        if (file_it != func_to_file.end()) {
-            var_file = file_it->second;
-        }
-
-        // Add variable as a symbol with file path
-        graph.add_symbol(var.qualified_name, var_file, SymbolType::Variable);
-
-        // Track data flow from value source to variable
-        if (!var.value_source.empty()) {
-            // Store the raw value source as the data flow source
-            // This captures: function calls, variable references, member accesses, literals
-            std::string source = var.value_source;
-
-            // If it's a function call, try to resolve to the function symbol
-            if (var.from_function_call) {
-                std::string source_base = var.value_source;
-                size_t pos = source_base.rfind("::");
-                if (pos != std::string::npos) {
-                    source_base = source_base.substr(pos + 2);
-                }
-                pos = source_base.rfind(".");
-                if (pos != std::string::npos) {
-                    source_base = source_base.substr(pos + 1);
-                }
-
-                auto match_it = base_to_final_names.find(source_base);
-                if (match_it != base_to_final_names.end() && !match_it->second.empty()) {
-                    source = match_it->second[0];
+        for (const auto &var : batch_variables) {
+            std::string var_file;
+            auto file_uid = graph.get_uid(var.containing_func);
+            if (file_uid != INVALID_UID) {
+                auto sym_file_uid = graph.get_symbol_file_uid(file_uid);
+                if (sym_file_uid != INVALID_UID) {
+                    var_file = graph.get_file_path(sym_file_uid);
                 }
             }
 
-            // Add the source as a symbol if it doesn't exist
-            if (!graph.has_symbol(source)) {
-                // Use same file as variable for source (best guess)
-                graph.add_symbol(source, var_file, var.from_function_call ? SymbolType::Function
-                                                                : SymbolType::Variable);
-            }
+            graph.add_symbol(var.qualified_name, var_file, SymbolType::Variable);
 
-            // Add data flow: source -> variable
-            graph.add_data_flow(source, var.qualified_name);
+            if (!var.value_source.empty()) {
+                const std::string *source_ptr = &var.value_source;
+
+                if (var.from_function_call) {
+                    std::string_view source_view = var.value_source;
+                    size_t pos = source_view.rfind("::");
+                    if (pos != std::string_view::npos) {
+                        source_view = source_view.substr(pos + 2);
+                    }
+                    pos = source_view.rfind('.');
+                    if (pos != std::string_view::npos) {
+                        source_view = source_view.substr(pos + 1);
+                    }
+                    std::string source_short(source_view);
+
+                    auto it = short_to_qualified.find(source_short);
+                    if (it != short_to_qualified.end()) {
+                        source_ptr = &it->second;
+                    }
+                }
+
+                if (!graph.has_symbol(*source_ptr)) {
+                    graph.add_symbol(*source_ptr, var_file,
+                                     var.from_function_call ? SymbolType::Function
+                                                            : SymbolType::Variable);
+                }
+
+                graph.add_data_flow(*source_ptr, var.qualified_name);
+            }
         }
+
+        batch_functions.clear();
+        std::vector<FunctionInfo>().swap(batch_functions);
+        batch_calls.clear();
+        std::vector<CallInfo>().swap(batch_calls);
+        batch_variables.clear();
+        std::vector<VariableInfo>().swap(batch_variables);
+
+        std::cout << "Batch " << (batch + 1) << " complete." << std::endl;
     }
 
-    // Populate indexed_files_ and shrink
+    short_to_qualified.clear();
+    std::unordered_map<std::string, std::string>().swap(short_to_qualified);
+
     indexed_files_.reserve(files.size());
     for (const auto &f : files) {
         indexed_files_.push_back(f.string());
     }
     indexed_files_.shrink_to_fit();
 
-    // Finalize (this also calls shrink_to_fit on the call graph)
-    graph.finalize();
-
-    std::cout << "\nIndexing complete." << std::endl;
-    std::cout << "  Files indexed: " << stats_.files_indexed.load() << std::endl;
     std::cout << "  Functions found: " << stats_.functions_found.load() << std::endl;
     std::cout << "  Calls found: " << stats_.calls_found.load() << std::endl;
     std::cout << "  Variables found: " << stats_.variables_found.load() << std::endl;

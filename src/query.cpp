@@ -67,9 +67,10 @@ void QueryEngine::print_path(const std::vector<std::string> &path) {
     std::cout << std::endl;
 }
 
-void QueryEngine::print_path(const std::vector<std::string> &path, const Graph &graph, bool show_paths) {
+void QueryEngine::print_path(const std::vector<std::string> &path, const Graph &graph,
+                             bool show_paths) {
     if (!show_paths) {
-        print_path(path);  // Use the simple version
+        print_path(path); // Use the simple version
         return;
     }
 
@@ -81,9 +82,9 @@ void QueryEngine::print_path(const std::vector<std::string> &path, const Graph &
         } else {
             std::cout << "    ";
         }
-        
+
         std::cout << path[i];
-        
+
         // Get file path for this symbol
         SymbolUID uid = graph.get_uid(path[i]);
         if (uid != INVALID_UID) {
@@ -166,12 +167,12 @@ void QueryEngine::dfs_forward(SymbolUID start, SymbolUID end, PathCallback &call
         std::unordered_set<SymbolUID>::const_iterator end_it;
     };
 
-    std::vector<State> stack;  // Use vector for better cache locality
-    stack.reserve(256);  // Pre-allocate reasonable depth
-    
+    std::vector<State> stack; // Use vector for better cache locality
+    stack.reserve(256);       // Pre-allocate reasonable depth
+
     std::vector<SymbolUID> current_path;
     current_path.reserve(256);
-    
+
     std::unordered_set<SymbolUID> in_path;
     in_path.reserve(256);
 
@@ -243,10 +244,10 @@ void QueryEngine::dfs_backward(SymbolUID start, SymbolUID end, PathCallback &cal
 
     std::vector<State> stack;
     stack.reserve(256);
-    
+
     std::vector<SymbolUID> current_path;
     current_path.reserve(256);
-    
+
     std::unordered_set<SymbolUID> in_path;
     in_path.reserve(256);
 
@@ -316,20 +317,21 @@ void QueryEngine::dfs_backward(SymbolUID start, SymbolUID end, PathCallback &cal
 void QueryEngine::dfs_bidirectional(SymbolUID start, SymbolUID end, PathCallback &callback) {
     // First, do a backward BFS from end to find all nodes reachable backward
     // Then do forward DFS from start, pruning branches that can't reach end
-    
+
     // Phase 1: Build backward reachability set from end (limited BFS)
     std::unordered_set<SymbolUID> can_reach_end;
-    std::unordered_map<SymbolUID, std::vector<SymbolUID>> backward_paths;  // node -> predecessors toward end
-    
+    std::unordered_map<SymbolUID, std::vector<SymbolUID>>
+        backward_paths; // node -> predecessors toward end
+
     {
         std::vector<SymbolUID> queue;
         queue.push_back(end);
         can_reach_end.insert(end);
-        
+
         size_t head = 0;
         while (head < queue.size()) {
             SymbolUID node = queue[head++];
-            
+
             // Get callers of this node (going backward)
             const auto &callers = graph_.get_callers(node);
             for (SymbolUID caller : callers) {
@@ -340,12 +342,12 @@ void QueryEngine::dfs_bidirectional(SymbolUID start, SymbolUID end, PathCallback
         }
         queue.shrink_to_fit();
     }
-    
+
     // If start can't reach end at all, return early
     if (!can_reach_end.count(start)) {
-        return;  // No paths exist
+        return; // No paths exist
     }
-    
+
     // Phase 2: Forward DFS from start, only exploring nodes that can reach end
     struct State {
         SymbolUID node;
@@ -355,10 +357,10 @@ void QueryEngine::dfs_bidirectional(SymbolUID start, SymbolUID end, PathCallback
 
     std::vector<State> stack;
     stack.reserve(256);
-    
+
     std::vector<SymbolUID> current_path;
     current_path.reserve(256);
-    
+
     std::unordered_set<SymbolUID> in_path;
     in_path.reserve(256);
 
@@ -400,7 +402,7 @@ void QueryEngine::dfs_bidirectional(SymbolUID start, SymbolUID end, PathCallback
             if (in_path.count(callee)) {
                 continue;
             }
-            
+
             // PRUNING: Skip if this callee can't reach end
             if (!can_reach_end.count(callee)) {
                 continue;
@@ -506,13 +508,13 @@ void QueryEngine::dfs_data_flow(SymbolUID source, SymbolUID target, PathCallback
 
     std::vector<State> stack;
     stack.reserve(128);
-    
+
     std::vector<SymbolUID> current_path;
     current_path.reserve(128);
-    
+
     std::unordered_set<SymbolUID> in_path;
     in_path.reserve(128);
-    
+
     const auto &init_sinks = graph_.get_data_sinks(source);
     stack.push_back({source, init_sinks.begin(), init_sinks.end()});
     current_path.push_back(source);
