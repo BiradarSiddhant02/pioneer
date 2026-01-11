@@ -33,6 +33,8 @@ int cmd_type(const std::string &symbol, bool nosort);
 int cmd_data_sources(const std::vector<std::string> &patterns, bool nosort);
 int cmd_data_sinks(const std::vector<std::string> &patterns, bool nosort);
 int cmd_list_variables(const std::vector<std::string> &patterns, bool nosort);
+int cmd_callers(const std::vector<std::string> &patterns, bool nosort, bool show_path);
+int cmd_callees(const std::vector<std::string> &patterns, bool nosort, bool show_path);
 int cmd_find_member(const std::vector<std::string> &patterns, bool nosort);
 int cmd_grep(const std::string &pattern, unsigned int num_threads, bool use_regex,
              bool ignore_case);

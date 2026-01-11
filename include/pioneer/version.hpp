@@ -17,9 +17,9 @@
 namespace pioneer {
 
 constexpr int VERSION_MAJOR = 2;
-constexpr int VERSION_MINOR = 2;
+constexpr int VERSION_MINOR = 3;
 constexpr int VERSION_PATCH = 0;
-constexpr const char *VERSION_STRING = "2.2.0";
+constexpr const char *VERSION_STRING = "2.3.0";
 
 constexpr int INDEX_SCHEMA_MAJOR = 2;
 constexpr int INDEX_SCHEMA_MINOR = 2;

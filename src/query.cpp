@@ -425,6 +425,42 @@ void QueryEngine::dfs_bidirectional(SymbolUID start, SymbolUID end, PathCallback
     }
 }
 
+std::vector<std::string> QueryEngine::immediate_callers(const std::string &symbol) const {
+    std::vector<std::string> callers;
+
+    SymbolUID sym_uid = graph_.get_uid(symbol);
+    if (sym_uid == INVALID_UID)
+        return callers;
+
+    const auto &caller_uids = graph_.get_callers(sym_uid);
+    for (SymbolUID uid : caller_uids) {
+        std::string name = graph_.get_symbol(uid);
+        if (!name.empty()) {
+            callers.push_back(name);
+        }
+    }
+
+    return callers;
+}
+
+std::vector<std::string> QueryEngine::immediate_callees(const std::string &symbol) const {
+    std::vector<std::string> callees;
+
+    SymbolUID sym_uid = graph_.get_uid(symbol);
+    if (sym_uid == INVALID_UID)
+        return callees;
+
+    const auto &callee_uids = graph_.get_callees(sym_uid);
+    for (SymbolUID uid : callee_uids) {
+        std::string name = graph_.get_symbol(uid);
+        if (!name.empty()) {
+            callees.push_back(name);
+        }
+    }
+
+    return callees;
+}
+
 std::vector<std::string> QueryEngine::data_sources(const std::string &variable) const {
     std::vector<std::string> sources;
 

@@ -38,6 +38,10 @@ public:
     static void print_path(const std::vector<std::string> &path, const Graph &graph,
                            bool show_paths);
 
+    // Immediate caller/callee queries
+    std::vector<std::string> immediate_callers(const std::string &symbol) const;
+    std::vector<std::string> immediate_callees(const std::string &symbol) const;
+
     // Data flow queries
     std::vector<std::string> data_sources(const std::string &variable) const;
     std::vector<std::string> data_sinks(const std::string &source) const;

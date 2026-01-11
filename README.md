@@ -1,6 +1,6 @@
 # Pioneer - Call Graph Analyzer
 
-**Version 2.2.0**
+**Version 2.3.0**
 
 A CLI tool that uses tree-sitter to index codebases (Python, C, C++) and build call graphs with advanced querying capabilities.
 

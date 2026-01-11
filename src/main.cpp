@@ -50,6 +50,10 @@ int main(int argc, char *argv[]) {
     opts("b,backtrace", "Enable backtrace mode (find all callers)");
 
     opts("l,list", "List all indexed symbols");
+    opts("caller", "Find immediate callers of symbol (comma-separated, no spaces)",
+         cxxopts::value<std::vector<std::string>>());
+    opts("callee", "Find immediate callees of symbol (comma-separated, no spaces)",
+         cxxopts::value<std::vector<std::string>>());
     opts("data-sources", "Find data sources (comma-separated, no spaces)",
          cxxopts::value<std::vector<std::string>>());
     opts("data-sinks", "Find data sinks (comma-separated, no spaces)",
@@ -100,6 +104,10 @@ int main(int argc, char *argv[]) {
             std::cout << "  pioneer --grep 'pattern'           Search pattern in all indexed files"
                       << std::endl;
             std::cout << "  pioneer --grep 'pattern' -j 8      Use 8 threads for grep" << std::endl;
+            std::cout << "  pioneer --caller 'foo'             Find immediate callers of foo"
+                      << std::endl;
+            std::cout << "  pioneer --callee 'foo'             Find immediate callees of foo"
+                      << std::endl;
             std::cout
                 << "  pioneer --data-sources 'func::x'   Find what variable x is assigned from"
                 << std::endl;
@@ -162,6 +170,18 @@ int main(int argc, char *argv[]) {
                 bool ignore_case = result.count("ignore-case") > 0;
                 return cmd_grep_streaming(pattern, num_threads, use_regex, ignore_case);
             }
+        }
+
+        if (result.count("caller")) {
+            auto patterns = result["caller"].as<std::vector<std::string>>();
+            if (!patterns.empty())
+                return cmd_callers(patterns, nosort, show_path);
+        }
+
+        if (result.count("callee")) {
+            auto patterns = result["callee"].as<std::vector<std::string>>();
+            if (!patterns.empty())
+                return cmd_callees(patterns, nosort, show_path);
         }
 
         if (result.count("data-sources")) {

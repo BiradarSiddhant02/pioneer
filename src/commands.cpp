@@ -494,6 +494,90 @@ int cmd_type(const std::string &symbol, const bool nosort) {
     return 0;
 }
 
+int cmd_callers(const std::vector<std::string> &patterns, bool nosort, bool show_path) {
+    Graph graph;
+    LoadMode mode = show_path ? LoadMode::WithPaths : LoadMode::Full;
+    if (!load_graph(graph, mode))
+        return 1;
+
+    QueryEngine engine(graph);
+    auto matches = engine.find_symbols(patterns);
+
+    if (!nosort)
+        std::sort(matches.begin(), matches.end());
+
+    std::set<std::string> all_callers;
+    for (const auto &sym : matches) {
+        for (const auto &caller : engine.immediate_callers(sym))
+            all_callers.insert(caller);
+    }
+
+    std::cout << "Immediate callers (" << all_callers.size() << "):" << std::endl;
+    if (all_callers.empty()) {
+        std::cout << "  (no callers found)" << std::endl;
+    } else {
+        for (const auto &caller : all_callers) {
+            std::cout << "  <- " << caller;
+            if (show_path) {
+                SymbolUID uid = graph.get_uid(caller);
+                if (uid != INVALID_UID) {
+                    SymbolUID file_uid = graph.get_symbol_file_uid(uid);
+                    if (file_uid != INVALID_UID) {
+                        std::string filepath = graph.get_file_path(file_uid);
+                        if (!filepath.empty()) {
+                            std::cout << " [" << filepath << "]";
+                        }
+                    }
+                }
+            }
+            std::cout << std::endl;
+        }
+    }
+    return 0;
+}
+
+int cmd_callees(const std::vector<std::string> &patterns, bool nosort, bool show_path) {
+    Graph graph;
+    LoadMode mode = show_path ? LoadMode::WithPaths : LoadMode::Full;
+    if (!load_graph(graph, mode))
+        return 1;
+
+    QueryEngine engine(graph);
+    auto matches = engine.find_symbols(patterns);
+
+    if (!nosort)
+        std::sort(matches.begin(), matches.end());
+
+    std::set<std::string> all_callees;
+    for (const auto &sym : matches) {
+        for (const auto &callee : engine.immediate_callees(sym))
+            all_callees.insert(callee);
+    }
+
+    std::cout << "Immediate callees (" << all_callees.size() << "):" << std::endl;
+    if (all_callees.empty()) {
+        std::cout << "  (no callees found)" << std::endl;
+    } else {
+        for (const auto &callee : all_callees) {
+            std::cout << "  -> " << callee;
+            if (show_path) {
+                SymbolUID uid = graph.get_uid(callee);
+                if (uid != INVALID_UID) {
+                    SymbolUID file_uid = graph.get_symbol_file_uid(uid);
+                    if (file_uid != INVALID_UID) {
+                        std::string filepath = graph.get_file_path(file_uid);
+                        if (!filepath.empty()) {
+                            std::cout << " [" << filepath << "]";
+                        }
+                    }
+                }
+            }
+            std::cout << std::endl;
+        }
+    }
+    return 0;
+}
+
 int cmd_data_sources(const std::vector<std::string> &patterns, bool nosort) {
     Graph graph;
     if (!load_graph(graph))

@@ -41,25 +41,6 @@ static json path_node_to_json(const PathNode &node) {
     return j;
 }
 
-// Helper function to deserialize PathNode trie from JSON
-static PathNode path_node_from_json(const json &j) {
-    PathNode node;
-
-    // Deserialize subdirectories
-    if (j.contains("subdirs")) {
-        for (auto it = j["subdirs"].begin(); it != j["subdirs"].end(); ++it) {
-            node.subdirs[it.key()] = path_node_from_json(it.value());
-        }
-    }
-
-    // Deserialize file UIDs
-    if (j.contains("files")) {
-        node.file_uids = j["files"].get<std::vector<SymbolUID>>();
-    }
-
-    return node;
-}
-
 SymbolUID Graph::add_symbol(const std::string &qualified_name, SymbolType type) {
     SymbolUID uid = call_graph.get_or_create_uid(qualified_name);
     call_graph.symbol_types[uid] = type;
@@ -727,7 +708,7 @@ public:
         return true;
     }
 
-    bool parse_error(std::size_t position, const std::string &last_token,
+    bool parse_error(std::size_t position, const std::string & /*last_token*/,
                      const json::exception &ex) override {
         throw std::runtime_error("JSON parse error at position " + std::to_string(position) + ": " +
                                  ex.what());
